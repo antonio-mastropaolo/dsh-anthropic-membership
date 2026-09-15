@@ -1,0 +1,50 @@
+#!/bin/bash
+# Chromeless Chrome app window for DeepSeek Harness — same pattern as Helixcode Dashboard v1.
+set -euo pipefail
+LOG="${DSH_WEB_LOG:-/tmp/dsh-web.log}"
+URLFILE="${HOME}/.dsh/web-login.url"
+PATCH="${HOME}/.ollama/launch/dsh/ollama.cordis.yml"
+DSH_BIN="${DSH_BIN:-/opt/homebrew/bin/dsh}"
+
+ensure_dsh() {
+  if curl -sf -o /dev/null --max-time 1 http://127.0.0.1:8185/healthz 2>/dev/null; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$LOG")"
+  : >> "$LOG"
+  nohup /usr/bin/env node "$DSH_BIN" web --patch "$PATCH" --no-open --host 127.0.0.1 --port 3080 >>"$LOG" 2>&1 &
+  for _ in $(seq 1 50); do
+    if curl -sf -o /dev/null --max-time 1 http://127.0.0.1:8185/healthz 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+fresh_url() {
+  /usr/bin/python3 - <<'PY'
+from pathlib import Path
+import re
+log_path = Path("/tmp/dsh-web.log")
+text = log_path.read_text(errors="replace") if log_path.exists() else ""
+urls = re.findall(r"https?://127\.0\.0\.1:3080/\?token=\S+", text)
+url = urls[-1].rstrip(").,]\"'") if urls else ""
+if url:
+    dest = Path.home() / ".dsh" / "web-login.url"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(url + "\n")
+    dest.chmod(0o600)
+    print(url, end="")
+PY
+}
+
+ensure_dsh || true
+URL="$(fresh_url || true)"
+if [ -z "${URL}" ] && [ -f "$URLFILE" ]; then
+  URL="$(/usr/bin/python3 -c 'from pathlib import Path; print(Path.home().joinpath(".dsh/web-login.url").read_text().strip(), end="")')"
+fi
+if [ -z "${URL}" ]; then
+  URL="http://127.0.0.1:3080/"
+fi
+open -na "Google Chrome" --args --app="$URL"

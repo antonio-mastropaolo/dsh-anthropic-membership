@@ -62,3 +62,7 @@ Needs a DSH install on disk so `sharp` resolves (or set `DSH_NODE_MODULES` to th
 ## License
 
 MIT
+
+## macOS app window (Helixboard-style)
+
+`/Applications/DSH v1.app` opens DeepSeek Harness in a chromeless Chrome `--app` window (same pattern as Helixcode Dashboard v1). It starts `dsh web` if needed and uses the current launch token. Drag it to the Dock for one click.
