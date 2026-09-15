@@ -24,6 +24,8 @@ dsh plugin --profile web add file:./dsh-anthropic-membership
 
 Restart `dsh web`. Open **Settings → Models**. On the Anthropic card: **Sign in with Claude Pro/Max**. Then pick an `anthropic` / `claude-*` model.
 
+The Anthropic card shows **plan-window %** (5-hour and weekly) and **DSH message counts** for that window. It does not show remaining messages, tokens, or dollars. Usage % is account-wide (every Claude app); message counts are DSH only.
+
 If the UI is down:
 
 ```sh
