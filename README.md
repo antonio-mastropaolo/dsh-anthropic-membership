@@ -31,6 +31,7 @@ If the UI is down:
 ```sh
 node login.mjs
 node logout.mjs
+node usage.mjs
 ```
 
 ## What it writes

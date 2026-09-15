@@ -38,7 +38,8 @@
     "lib/plan-usage.mjs",
     "lib/request-image.mjs",
     "login.mjs",
-    "logout.mjs"
+    "logout.mjs",
+    "usage.mjs"
   ],
   "scripts": {
     "test": "node lib/compact-payload.test.mjs && node lib/request-image.test.mjs && node lib/plan-usage.test.mjs && node lib/dsh-messages.test.mjs"
@@ -63,5 +64,10 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
+  },
+  "bin": {
+    "dsh-anthropic-usage": "./usage.mjs",
+    "dsh-anthropic-login": "./login.mjs",
+    "dsh-anthropic-logout": "./logout.mjs"
   }
 }
