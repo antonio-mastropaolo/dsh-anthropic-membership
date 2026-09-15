@@ -33,6 +33,7 @@
     "lib/compact-payload.mjs",
     "lib/dsh-messages.mjs",
     "lib/dsh-nm.mjs",
+    "lib/full-access.mjs",
     "lib/index.js",
     "lib/oauth.mjs",
     "lib/plan-usage.mjs",
@@ -42,7 +43,7 @@
     "usage.mjs"
   ],
   "scripts": {
-    "test": "node lib/compact-payload.test.mjs && node lib/request-image.test.mjs && node lib/plan-usage.test.mjs && node lib/dsh-messages.test.mjs"
+    "test": "node lib/compact-payload.test.mjs && node lib/request-image.test.mjs && node lib/plan-usage.test.mjs && node lib/dsh-messages.test.mjs && node lib/full-access.test.mjs"
   },
   "repository": {
     "type": "git",
@@ -61,7 +62,8 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings-models",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-api-session-controller"
       ]
     }
   },

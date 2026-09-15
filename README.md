@@ -66,3 +66,5 @@ MIT
 ## macOS app window (Helixboard-style)
 
 `/Applications/DSH v1.app` opens DeepSeek Harness in a chromeless Chrome `--app` window (same pattern as Helixcode Dashboard v1). It starts `dsh web` if needed and uses the current launch token. Drag it to the Dock for one click.
+
+The composer dock shows **Claude** 5h/weekly %, a **Codex** slot (lights up when an openai-codex grant exists), and a **Full access** switch (sets `permission.defaultPreset` and `/permission danger-full-access` on the live session).
