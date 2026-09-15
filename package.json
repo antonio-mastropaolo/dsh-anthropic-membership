@@ -1,0 +1,62 @@
+{
+  "name": "dsh-anthropic-membership",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness plugin: Sign in with Claude Pro/Max (no Anthropic API key). Also caps Anthropic request images at 2000px and slims /compact so a 1M context can still summarize.",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "anthropic",
+    "claude",
+    "oauth",
+    "membership"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/oauth.mjs",
+    "lib/dsh-nm.mjs",
+    "lib/request-image.mjs",
+    "lib/compact-payload.mjs",
+    "login.mjs",
+    "logout.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node lib/compact-payload.test.mjs && node lib/request-image.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/antonio-mastropaolo/dsh-anthropic-membership.git"
+  },
+  "bugs": {
+    "url": "https://github.com/antonio-mastropaolo/dsh-anthropic-membership/issues"
+  },
+  "homepage": "https://github.com/antonio-mastropaolo/dsh-anthropic-membership#readme",
+  "author": "Antonio Mastropaolo",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-settings-models"]
+    }
+  }
+}

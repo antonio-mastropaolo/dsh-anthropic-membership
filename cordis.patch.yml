@@ -1,0 +1,4 @@
+# Inserted by `dsh plugin add`.
+- insert:
+    - id: anthropic-membership
+      name: dsh-anthropic-membership
