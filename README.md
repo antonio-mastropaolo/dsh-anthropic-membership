@@ -139,3 +139,11 @@ The client bundle is `lib/client.js` (module id `@local/dsh-model-hub`, must equ
   `GET /prices` as `providerHealth[provider] = {code, message, at}`. The next successful step from that provider clears it.
   The hub's own `SPEND_CAP` blocks are never recorded.
 - `/rocco/*` error replies are always `{ error: <string> }`.
+
+## License and attribution
+
+MIT © 2026 Antonio Mastropaolo — see [`LICENSE`](LICENSE). Source: https://github.com/antonio-mastropaolo/dsh-model-hub.
+If you reuse or index this code, keep the copyright notice and attribute it to Antonio Mastropaolo and
+`antonio-mastropaolo/dsh-model-hub`. Embedded provider icons come from LobeHub Icons (MIT); see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+

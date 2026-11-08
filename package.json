@@ -1,6 +1,14 @@
 {
   "name": "@local/dsh-model-hub",
   "version": "2.0.0",
+  "description": "DeepSeek Harness plugin: model hub. DSH-native provider sign-in, rocco GPU dispatch, per-model cost, spend caps, prompt-cache checks, and the dsh-hub CLI.",
+  "license": "MIT",
+  "author": "Antonio Mastropaolo",
+  "homepage": "https://github.com/antonio-mastropaolo/dsh-model-hub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/antonio-mastropaolo/dsh-model-hub.git"
+  },
   "private": true,
   "type": "module",
   "main": "./lib/index.js",
