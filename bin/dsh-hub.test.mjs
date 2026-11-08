@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -16,9 +16,9 @@ function env() {
   chmodSync(creds, 0o600);
   return { dir, creds, env: { DSH_HUB_DATA_DIR: join(dir, "data"), DSH_HUB_CREDENTIALS: creds, DSH_HUB_URL: "http://hub.test" } };
 }
-function run(args, { fetch, rocco, e = env() } = {}) {
+function run(args, { fetch, gpu, e = env() } = {}) {
   const o = [], er = [];
-  return main(args, { out: (s) => o.push(s), err: (s) => er.push(s), env: e.env, fetch, rocco }).then((code) => ({ code, out: o.join("\n"), err: er.join("\n"), e }));
+  return main(args, { out: (s) => o.push(s), err: (s) => er.push(s), env: e.env, fetch, gpu }).then((code) => ({ code, out: o.join("\n"), err: er.join("\n"), e }));
 }
 const hubFetch = (routes) => async (url) => {
   const p = new URL(url).pathname + new URL(url).search;
@@ -26,7 +26,7 @@ const hubFetch = (routes) => async (url) => {
   if (!r) throw new Error("ECONNREFUSED");
   return { status: r[0], json: async () => r[1] };
 };
-const roccoOk = {
+const gpuOk = {
   gpus: async () => ({ status: 200, body: { ok: true, manager: { active: true }, tier: 28, loaded_model: null, state_age_s: 3, stale: false, gpus: [{ index: 0, used_mib: 10, total_mib: 100, util_pct: 1, processes: [{ user: "u", cmd: "python" }], reserved_by: [] }], reservations: [{ owner: "x", gpus: "all", stale: true }] } }),
   switch: async (m, g) => ({ status: 202, body: { status: "switching", gpus: g } }),
   unload: async () => ({ status: 502, body: { error: "unload failed" } }),
@@ -64,20 +64,20 @@ test("status: reachable -> 0, unreachable -> 1 with the data still printed", asy
 });
 
 test("gpus / switch / unload go to the shim client", async () => {
-  const g = await run(["gpus", "--json"], { rocco: roccoOk });
+  const g = await run(["gpus", "--json"], { gpu: gpuOk });
   assert.equal(JSON.parse(g.out).gpus.length, 1);
-  assert.match((await run(["gpus"], { rocco: roccoOk })).out, /reservation x gpus=all \(stale\)/);
-  const s = await run(["switch", "rocco-qwen38-q4", "--gpus", "3,2", "--json"], { rocco: roccoOk });
+  assert.match((await run(["gpus"], { gpu: gpuOk })).out, /reservation x gpus=all \(stale\)/);
+  const s = await run(["switch", "model-a", "--gpus", "3,2", "--json"], { gpu: gpuOk });
   assert.equal(s.code, 0);
   assert.deepEqual(JSON.parse(s.out).gpus, [2, 3]);
-  assert.equal((await run(["switch", "rocco-qwen38-q4", "--gpus", "9"], { rocco: roccoOk })).code, 2);
-  assert.equal((await run(["switch", "rocco-qwen38-q4", "--gpus", "1,1"], { rocco: roccoOk })).code, 2);
-  assert.equal((await run(["switch", "bad model"], { rocco: roccoOk })).code, 2);
-  assert.equal((await run(["switch"], { rocco: roccoOk })).code, 2);
-  const u = await run(["unload", "--json"], { rocco: roccoOk });
+  assert.equal((await run(["switch", "model-a", "--gpus", "64"], { gpu: gpuOk })).code, 2);
+  assert.equal((await run(["switch", "model-a", "--gpus", "1,1"], { gpu: gpuOk })).code, 2);
+  assert.equal((await run(["switch", "bad model"], { gpu: gpuOk })).code, 2);
+  assert.equal((await run(["switch"], { gpu: gpuOk })).code, 2);
+  const u = await run(["unload", "--json"], { gpu: gpuOk });
   assert.equal(u.code, 1);
   assert.equal(JSON.parse(u.out).httpStatus, 502);
-  const down = await run(["gpus"], { rocco: { gpus: async () => ({ status: 502, body: { ok: false, error: "x" } }) } });
+  const down = await run(["gpus"], { gpu: { gpus: async () => ({ status: 502, body: { ok: false, error: "x" } }) } });
   assert.equal(down.code, 1);
 });
 
@@ -96,9 +96,12 @@ test("spend reads the ledger and caps; --by validated", async () => {
 
 test("prices: offline table lookups; unpriced -> exit 1; bare name flagged", async () => {
   const f = async () => { throw new Error("offline"); };
-  const r = await run(["prices", "rocco/rocco-qwen38-q4", "--json"], { fetch: f });
+  const e = env();
+  mkdirSync(e.env.DSH_HUB_DATA_DIR, { recursive: true });
+  writeFileSync(join(e.env.DSH_HUB_DATA_DIR, "config.json"), JSON.stringify({ localProviders: ["box"] }));
+  const r = await run(["prices", "box/model-a", "--json"], { fetch: f, e });
   assert.equal(r.code, 0);
-  assert.equal(JSON.parse(r.out).models["rocco/rocco-qwen38-q4"].billing, "local");
+  assert.equal(JSON.parse(r.out).models["box/model-a"].billing, "local");
   assert.equal((await run(["prices", "google/definitely-not-a-model"], { fetch: f })).code, 1);
   assert.equal((await run(["prices"], { fetch: f })).code, 2);
 });
@@ -115,11 +118,11 @@ test("cache: sessions list and 404", async () => {
 test("doctor: all good -> 0; hub down -> 1 with JSON checks", async () => {
   const f = hubFetch({ "/healthz": [200, {}], "/status": [200, { imageCap: true, compactionSlim: true, spendGuard: true }] });
   const lit = async (u) => { if (String(u).includes("hub.test")) return f(u); throw new Error("offline"); };
-  const ok = await run(["doctor", "--json"], { fetch: lit, rocco: roccoOk });
+  const ok = await run(["doctor", "--json"], { fetch: lit, rocco: gpuOk });
   const j = JSON.parse(ok.out);
   assert.equal(j.checks.find((c) => c.name === "host API").level, "ok");
   assert.equal(j.checks.find((c) => c.name === "credentials file").level, "ok");
-  const bad = await run(["doctor", "--json"], { fetch: hubFetch({}), rocco: roccoOk });
+  const bad = await run(["doctor", "--json"], { fetch: hubFetch({}), rocco: gpuOk });
   assert.equal(bad.code, 1);
   assert.equal(JSON.parse(bad.out).ok, false);
 });
@@ -136,18 +139,42 @@ test("real process: runs via the bin entry, JSON on stdout, exit codes propagate
 
 test("switch: nested shim errors print the message (never [object Object]); --force and --auto pass through", async () => {
   const seen = [];
-  const rocco = {
-    switch: async (m, g, o) => { seen.push({ m, g, o }); return { status: 409, body: { error: { message: "lease held for 120 more seconds", type: "rocco_switch" } } }; },
+  const gpu = {
+    switch: async (m, g, o) => { seen.push({ m, g, o }); return { status: 409, body: { error: { message: "lease held for 120 more seconds", type: "gpu_switch" } } }; },
   };
-  const r = await run(["switch", "rocco-qwen38-q4"], { rocco });
+  const r = await run(["switch", "model-a"], { gpu });
   assert.equal(r.code, 1);
   assert.match(r.out + r.err, /lease held for 120 more seconds/);
   assert.doesNotMatch(r.out + r.err, /\[object Object\]/);
-  await run(["switch", "rocco-qwen38-q4", "--force"], { rocco });
-  await run(["switch", "rocco-qwen38-q4", "--auto"], { rocco });
+  await run(["switch", "model-a", "--force"], { gpu });
+  await run(["switch", "model-a", "--auto"], { gpu });
   assert.equal(seen[1].o.force, true);
   assert.equal(seen[2].o.auto, true);
-  assert.equal((await run(["switch", "rocco-qwen38-q4", "--auto", "--gpus", "2"], { rocco })).code, 2);
-  const down = await run(["gpus"], { rocco: { gpus: async () => ({ status: 500, body: { error: { message: "nested boom" } } }) } });
+  assert.equal((await run(["switch", "model-a", "--auto", "--gpus", "2"], { gpu })).code, 2);
+  const down = await run(["gpus"], { gpu: { gpus: async () => ({ status: 500, body: { error: { message: "nested boom" } } }) } });
   assert.match(down.out + down.err, /nested boom/);
+});
+
+test("no GPU server configured: gpus/switch/unload print one line and exit 2; doctor says not configured (OK)", async () => {
+  for (const args of [["gpus"], ["switch", "model-a"], ["unload"]]) {
+    const r = await run(args);
+    assert.equal(r.code, 2, args.join(" "));
+    assert.equal(r.err, "no GPU server configured (see README: GPU server)");
+  }
+  const f = hubFetch({ "/healthz": [200, {}], "/status": [200, { imageCap: true, compactionSlim: true, spendGuard: true }] });
+  const lit = async (u) => { if (String(u).includes("hub.test")) return f(u); throw new Error("offline"); };
+  const d = JSON.parse((await run(["doctor", "--json"], { fetch: lit })).out);
+  assert.deepEqual(d.checks.find((c) => c.name === "GPU server"), { name: "GPU server", level: "ok", detail: "not configured" });
+});
+
+test("configured via config.json: CLI talks to the config URL and uses the configured name", async () => {
+  const e = env();
+  mkdirSync(e.env.DSH_HUB_DATA_DIR, { recursive: true });
+  writeFileSync(join(e.env.DSH_HUB_DATA_DIR, "config.json"), JSON.stringify({ gpuServer: { id: "lab", name: "Lab box", url: "http://gpu.test:4010" } }));
+  const seen = [];
+  const f = async (u) => { seen.push(String(u)); return { status: 502, json: async () => ({ error: "boom" }) }; };
+  const r = await run(["gpus"], { fetch: f, e });
+  assert.equal(r.code, 1);
+  assert.deepEqual(seen, ["http://gpu.test:4010/v1/gpus"]);
+  assert.match(r.err, /^Lab box: HTTP 502/);
 });

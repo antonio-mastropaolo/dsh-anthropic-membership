@@ -4,7 +4,7 @@
  *   status | accounts | gpus | switch <model> [--gpus 2,3] | unload | spend [--since] [--by]
  *   | prices <provider/model…> | cache [--session <id>] | doctor
  * Offline-capable: accounts, spend, prices (read the data dir). Needs DSH running: status, cache.
- * Talks to the rocco shim directly for gpus/switch/unload. Never prints secrets.
+ * Talks to the configured GPU server (config.json) directly for gpus/switch/unload. Never prints secrets.
  */
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -12,16 +12,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readAccounts } from "../lib/accounts/index.mjs";
 import { createCostEngine, DEFAULT_DATA_DIR } from "../lib/host/engine.mjs";
-import { createRoccoClient, errMessage, MODEL_RE, parseGpus } from "../lib/host/rocco.mjs";
+import { loadConfig } from "../lib/config.mjs";
+import { createGpuClient, errMessage, MODEL_RE, parseGpus } from "../lib/host/gpu.mjs";
 
 const HUB_URL = "http://127.0.0.1:8185";
 const USAGE = `usage: dsh-hub <command> [--json]
   status                      host API health + plugin features + plan
   accounts                    provider sign-in / expiry / watchdog state
-  gpus                        rocco GPU cards, loaded model, stale reservations
+  gpus                        GPU server cards, loaded model, stale reservations
   switch <model> [--gpus 2,3 | --auto] [--force]
-                              load a rocco model; --gpus pins it, --auto clears a pin, --force overrides the 300 s lease
-  unload                      unload the rocco model now
+                              load a model on the GPU server; --gpus pins it, --auto clears a pin, --force overrides the 300 s lease
+  unload                      unload the GPU server's model now
   spend [--since today|7d|30d|all] [--by provider|model|session|day]
   prices <provider/model…>    price rows (litellm / override / unpriced)
   cache [--session <id>]      prompt-cache hit ratios
@@ -67,7 +68,10 @@ export async function main(argv, io = {}) {
   const dataDir = env.DSH_HUB_DATA_DIR || DEFAULT_DATA_DIR;
   const hubUrl = env.DSH_HUB_URL || HUB_URL;
   const credentialsPath = env.DSH_HUB_CREDENTIALS || undefined;
-  const rocco = io.rocco ?? createRoccoClient({ base: env.ROCCO_SHIM_URL || undefined, fetchImpl });
+  const cfg = loadConfig({ dataDir, env });
+  const gpu = io.gpu ?? createGpuClient({ getConfig: () => cfg, fetchImpl });
+  const gpuConfigured = Boolean(io.gpu || cfg.gpuServer);
+  const gpuName = cfg.gpuServer?.name ?? "GPU server";
 
   let parsed;
   try { parsed = parseArgs(argv); } catch (e) { err(e.message); err(USAGE); return e.code ?? 2; }
@@ -86,7 +90,8 @@ export async function main(argv, io = {}) {
       throw new CliError(`DSH host API not reachable at ${hubUrl} (is dsh web running with the model-hub plugin?)`, 3);
     }
   }
-  const roccoFail = (r) => { throw new CliError(`rocco shim: HTTP ${r.status} ${errMessage(r.body)}`.trim(), 1); };
+  const gpuFail = (r) => { throw new CliError(`${gpuName}: HTTP ${r.status} ${errMessage(r.body)}`.trim(), 1); };
+  const needGpu = () => { if (!gpuConfigured) throw new CliError("no GPU server configured (see README: GPU server)", 2); };
 
   try {
     switch (cmd) {
@@ -108,8 +113,9 @@ export async function main(argv, io = {}) {
         return accounts.some((x) => x.health === "refresh-failed") ? 1 : 0;
       }
       case "gpus": {
-        const r = await rocco.gpus();
-        if (r.status !== 200 || r.body?.ok === false) roccoFail(r);
+        needGpu();
+        const r = await gpu.gpus();
+        if (r.status !== 200 || r.body?.ok === false) gpuFail(r);
         emit(r.body, (b) => [
           `manager ${b.manager?.active ? "active" : "inactive"}  tier ${b.tier}  loaded ${b.loaded_model ?? "none"}  state ${b.state_age_s}s old${b.stale ? " STALE" : ""}`,
           ...b.gpus.map((g) => `GPU${g.index}  ${g.used_mib}/${g.total_mib} MiB  util ${g.util_pct}%  ${g.processes.map((p) => `${p.user}:${p.cmd}`).join(",") || "idle"}${g.reserved_by?.length ? `  reserved:${g.reserved_by.join(",")}` : ""}`),
@@ -119,6 +125,7 @@ export async function main(argv, io = {}) {
         return 0;
       }
       case "switch": {
+        needGpu();
         if (rest.length !== 1 || !MODEL_RE.test(rest[0])) throw new CliError("usage: dsh-hub switch <model> [--gpus 2,3 | --auto] [--force]", 2);
         if (flags.auto && flags.gpus !== undefined) throw new CliError("--auto and --gpus are mutually exclusive", 2);
         let gpus;
@@ -126,12 +133,13 @@ export async function main(argv, io = {}) {
           const list = flags.gpus.split(",").map((s) => (/^\d+$/.test(s.trim()) ? Number(s) : NaN));
           try { gpus = parseGpus(list); } catch (e) { throw new CliError(e.message, 2); }
         }
-        const r = await rocco.switch(rest[0], gpus, { force: Boolean(flags.force), auto: Boolean(flags.auto) });
+        const r = await gpu.switch(rest[0], gpus, { force: Boolean(flags.force), auto: Boolean(flags.auto) });
         emit({ httpStatus: r.status, ...r.body }, (b) => `HTTP ${b.httpStatus} ${b.status ?? errMessage(b)}${b.gpus ? ` gpus=${b.gpus}` : ""}${b.was_pinned ? ` (was pinned to ${b.was_pinned})` : ""}`);
         return r.status === 200 || r.status === 202 ? 0 : 1;
       }
       case "unload": {
-        const r = await rocco.unload();
+        needGpu();
+        const r = await gpu.unload();
         emit({ httpStatus: r.status, ...r.body }, (b) => `HTTP ${b.httpStatus} ${b.status ?? errMessage(b)}`);
         return r.status === 200 ? 0 : 1;
       }
@@ -139,7 +147,7 @@ export async function main(argv, io = {}) {
         const since = flags.since ?? "today";
         const by = flags.by ?? "provider";
         if (!/^(today|7d|30d|all)$/.test(since) || !["provider", "model", "session", "day"].includes(by)) throw new CliError("bad --since/--by", 2);
-        const rep = await createCostEngine({ dataDir }).spendReport({ since, by });
+        const rep = await createCostEngine({ dataDir, localProviders: cfg.localProviders }).spendReport({ since, by });
         emit(rep, (r) => [
           `${r.since}: ${fmtUsd(r.totals.usd)} charged, ${fmtUsd(r.totals.apiEquivUsd)} API-equivalent, ${r.totals.calls} calls`,
           ...Object.entries(r.groups ?? {}).map(([k, v]) => `  ${k.padEnd(28)} ${fmtUsd(v.usd).padStart(9)}  api-eq ${fmtUsd(v.apiEquivUsd).padStart(9)}  ${v.calls} calls`),
@@ -149,7 +157,7 @@ export async function main(argv, io = {}) {
       }
       case "prices": {
         if (rest.length < 1) throw new CliError("usage: dsh-hub prices <provider/model>…", 2);
-        const rep = await createCostEngine({ dataDir, fetchImpl }).prices(rest);
+        const rep = await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders }).prices(rest);
         emit(rep, (r) => [`table: ${r.source} (${r.count} entries)`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n"));
         return Object.values(rep.models).every((p) => p.priced) ? 0 : 1;
       }
@@ -163,7 +171,7 @@ export async function main(argv, io = {}) {
         return 0;
       }
       case "doctor":
-        return await doctor({ out, emit, json, fetchImpl, hubUrl, dataDir, credentialsPath, rocco, env });
+        return await doctor({ out, emit, json, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, gpuConfigured, gpuName, cfg, env });
       default:
         throw new CliError(`unknown command ${cmd}\n${USAGE}`, 2);
     }
@@ -174,7 +182,7 @@ export async function main(argv, io = {}) {
   }
 }
 
-async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, rocco, env }) {
+async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, gpuConfigured, gpuName, cfg, env }) {
   const checks = [];
   const add = (name, level, detail) => checks.push({ name, level, detail });
   const mode = (p) => (statSync(p).mode & 0o777).toString(8);
@@ -186,13 +194,17 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, rocco
     add("guards", s.spendGuard && s.compactionSlim && s.imageCap ? "ok" : "warn", `imageCap=${s.imageCap} compactionSlim=${s.compactionSlim} spendGuard=${s.spendGuard}`);
   } catch { add("host API", "fail", `not reachable at ${hubUrl}`); }
 
-  try {
-    const h = await rocco.health();
-    add("rocco shim", h.status === 200 ? "ok" : "fail", `HTTP ${h.status}`);
-    const g = await rocco.gpus();
-    if (g.status === 200 && g.body?.ok !== false) add("rocco manager", g.body.stale ? "warn" : "ok", `state ${g.body.state_age_s}s old${g.body.stale ? " (STALE)" : ""}, loaded ${g.body.loaded_model ?? "none"}`);
-    else add("rocco manager", "fail", String(g.body?.error ?? `HTTP ${g.status}`).slice(0, 160));
-  } catch { add("rocco shim", "fail", "unreachable"); }
+  if (!gpuConfigured) add("GPU server", "ok", "not configured");
+  else {
+    try {
+      const h = await gpu.health();
+      add(`${gpuName} server`, h.status === 200 ? "ok" : "fail", `HTTP ${h.status}`);
+      const g = await gpu.gpus();
+      if (g.status === 200 && g.body?.ok !== false) add(`${gpuName} manager`, g.body.stale ? "warn" : "ok", `state ${g.body.state_age_s}s old${g.body.stale ? " (STALE)" : ""}, loaded ${g.body.loaded_model ?? "none"}`);
+      else add(`${gpuName} manager`, "fail", String(g.body?.error ?? `HTTP ${g.status}`).slice(0, 160));
+    } catch { add(`${gpuName} server`, "fail", "unreachable"); }
+  }
+  for (const e of cfg.errors) add("config.json", "warn", e);
 
   try {
     const accounts = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) });
@@ -207,7 +219,7 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, rocco
   else add("data dir", "warn", `${dataDir} does not exist yet (created on first spend)`);
 
   try {
-    const eng = createCostEngine({ dataDir, fetchImpl });
+    const eng = createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders });
     const caps = eng.capsStatus();
     add("caps", caps.warnings.length ? "warn" : "ok", `daily $${caps.limits.dailyUsd}, session $${caps.limits.sessionUsd}, today $${caps.todayUsd.toFixed(2)} (${caps.action})`);
     const p = await eng.prices(["google/gemini-3.8-flash"]);
