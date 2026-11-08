@@ -1,4 +1,4 @@
-# Inserted by `dsh plugin add`.
+# Add to your DSH profile's cordis.patch.yml (e.g. ~/.dsh/profiles/web/cordis.patch.yml)
 - insert:
-    - id: anthropic-membership
-      name: dsh-anthropic-membership
+    - id: model-hub
+      name: '@local/dsh-model-hub'

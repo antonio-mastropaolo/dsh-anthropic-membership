@@ -1,63 +1,18 @@
 {
-  "name": "dsh-anthropic-membership",
-  "version": "1.0.0",
-  "description": "DeepSeek Harness plugin: Sign in with Claude Pro/Max (no Anthropic API key). Also caps Anthropic request images at 2000px and slims /compact so a 1M context can still summarize.",
-  "private": false,
+  "name": "@local/dsh-model-hub",
+  "version": "2.0.0",
+  "private": true,
   "type": "module",
-  "license": "MIT",
-  "keywords": [
-    "deepseek",
-    "harness",
-    "dsh",
-    "dsh-plugin",
-    "anthropic",
-    "claude",
-    "oauth",
-    "membership"
-  ],
-  "engines": {
-    "node": ">=20"
-  },
   "main": "./lib/index.js",
+  "bin": {
+    "dsh-hub": "./bin/dsh-hub.mjs"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
-    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": [
-    "LICENSE",
-    "README.md",
-    "cordis.patch.yml",
-    "lib/client.js",
-    "lib/compact-payload.mjs",
-    "lib/dsh-messages.mjs",
-    "lib/dsh-nm.mjs",
-    "lib/full-access.mjs",
-    "lib/index.js",
-    "lib/oauth.mjs",
-    "lib/plan-usage.mjs",
-    "lib/request-image.mjs",
-    "login.mjs",
-    "logout.mjs",
-    "usage.mjs"
-  ],
-  "scripts": {
-    "test": "node lib/compact-payload.test.mjs && node lib/request-image.test.mjs && node lib/plan-usage.test.mjs && node lib/dsh-messages.test.mjs && node lib/full-access.test.mjs"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/antonio-mastropaolo/dsh-anthropic-membership.git"
-  },
-  "bugs": {
-    "url": "https://github.com/antonio-mastropaolo/dsh-anthropic-membership/issues"
-  },
-  "homepage": "https://github.com/antonio-mastropaolo/dsh-anthropic-membership#readme",
-  "author": "Antonio Mastropaolo",
   "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
     "client": {
       "platform": "web",
       "inject": [
@@ -68,9 +23,7 @@
       ]
     }
   },
-  "bin": {
-    "dsh-anthropic-usage": "./usage.mjs",
-    "dsh-anthropic-login": "./login.mjs",
-    "dsh-anthropic-logout": "./logout.mjs"
+  "scripts": {
+    "test": "node --test lib/*.test.mjs lib/accounts/*.test.mjs lib/cost/*.test.mjs lib/host/*.test.mjs bin/*.test.mjs lib/client/*.test.mjs"
   }
 }

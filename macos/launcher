@@ -1,50 +1,87 @@
 #!/bin/bash
-# Chromeless Chrome app window for DeepSeek Harness — same pattern as Helixcode Dashboard v1.
-set -euo pipefail
-LOG="${DSH_WEB_LOG:-/tmp/dsh-web.log}"
-URLFILE="${HOME}/.dsh/web-login.url"
-PATCH="${HOME}/.ollama/launch/dsh/ollama.cordis.yml"
-DSH_BIN="${DSH_BIN:-/opt/homebrew/bin/dsh}"
+# DSH v2 — DeepSeek Harness in a chromeless Chrome --app window (Dock launcher).
+# Starts `dsh web` on 127.0.0.1:3080 if it is not already running, then opens the
+# window with a launch token the server ACCEPTS (dsh mints a new token on every boot,
+# so a token from an earlier boot gets 401).
+#
+# v2 fixes over v1:
+#  - Dock/Finder launches get PATH=/usr/bin:/bin only, so `env node` failed; PATH is pinned.
+#  - v1 read the token 0.3 s before the new boot printed it and opened a stale (401) URL;
+#    v2 waits for a token printed by THIS boot and checks it (303) before opening.
+#  - The log holds the launch token, so it lives in ~/Library/Logs/DSH (0600), not /tmp.
+#  - dsh is started in its own session so it outlives this launcher.
+#
+# Test hook: DSH_NO_WINDOW=1 does everything except open Chrome.
+set -uo pipefail
+umask 077
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-ensure_dsh() {
-  if curl -sf -o /dev/null --max-time 1 http://127.0.0.1:8185/healthz 2>/dev/null; then
-    return 0
-  fi
-  mkdir -p "$(dirname "$LOG")"
-  : >> "$LOG"
-  nohup /usr/bin/env node "$DSH_BIN" web --patch "$PATCH" --no-open --host 127.0.0.1 --port 3080 >>"$LOG" 2>&1 &
-  for _ in $(seq 1 50); do
-    if curl -sf -o /dev/null --max-time 1 http://127.0.0.1:8185/healthz 2>/dev/null; then
-      return 0
-    fi
+HOST=127.0.0.1
+PORT=3080
+LOG="${DSH_WEB_LOG:-$HOME/Library/Logs/DSH/dsh-web.log}"
+URLFILE="$HOME/.dsh/web-login.url"
+PATCH="$HOME/.ollama/launch/dsh/ollama.cordis.yml"
+DSH_BIN="${DSH_BIN:-/opt/homebrew/bin/dsh}"
+NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
+
+notify() {
+  /usr/bin/osascript -e "display notification \"$1\" with title \"DSH\"" >/dev/null 2>&1 || true
+}
+
+web_up() { # any HTTP answer (401 without a token is normal) means the server is listening
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://$HOST:$PORT/" 2>/dev/null)"
+  [ -n "$code" ] && [ "$code" != "000" ]
+}
+
+token_ok() { # a valid launch token answers 303 (redirect into the app); a stale one 401
+  [ -n "$1" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$1" 2>/dev/null)" = "303" ]
+}
+
+tokens_after() { # $1 = byte offset into $LOG; prints token URLs found after it, newest first
+  tail -c +"$(($1 + 1))" "$LOG" 2>/dev/null |
+    grep -oE "http://$HOST:$PORT/\?token=[^[:space:]\"')]+" | tail -r
+}
+
+mkdir -p "$(dirname "$LOG")"
+touch "$LOG" && chmod 600 "$LOG"
+
+if [ -z "$NODE_BIN" ] || [ ! -x "$DSH_BIN" ]; then
+  notify "node or dsh not found (expected $DSH_BIN)"
+  exit 1
+fi
+
+URL=""
+if web_up; then
+  for cand in $(tokens_after 0) "$(cat "$URLFILE" 2>/dev/null)"; do
+    if token_ok "$cand"; then URL="$cand"; break; fi
+  done
+else
+  OFFSET="$(stat -f %z "$LOG")"
+  cd "$HOME" || exit 1
+  # setsid: own session + process group, so dsh keeps running after this launcher exits.
+  /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' -- \
+    "$NODE_BIN" "$DSH_BIN" web --patch "$PATCH" --no-open --host "$HOST" --port "$PORT" \
+    >>"$LOG" 2>&1 </dev/null &
+  for _ in $(seq 1 150); do # up to 30 s; a cold boot takes ~2 s
+    cand="$(tokens_after "$OFFSET" | head -1)"
+    if [ -n "$cand" ] && token_ok "$cand"; then URL="$cand"; break; fi
     sleep 0.2
   done
-  return 1
-}
-
-fresh_url() {
-  /usr/bin/python3 - <<'PY'
-from pathlib import Path
-import re
-log_path = Path("/tmp/dsh-web.log")
-text = log_path.read_text(errors="replace") if log_path.exists() else ""
-urls = re.findall(r"https?://127\.0\.0\.1:3080/\?token=\S+", text)
-url = urls[-1].rstrip(").,]\"'") if urls else ""
-if url:
-    dest = Path.home() / ".dsh" / "web-login.url"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(url + "\n")
-    dest.chmod(0o600)
-    print(url, end="")
-PY
-}
-
-ensure_dsh || true
-URL="$(fresh_url || true)"
-if [ -z "${URL}" ] && [ -f "$URLFILE" ]; then
-  URL="$(/usr/bin/python3 -c 'from pathlib import Path; print(Path.home().joinpath(".dsh/web-login.url").read_text().strip(), end="")')"
+  if [ -z "$URL" ]; then
+    notify "dsh web did not start. Log: $LOG"
+    exit 1
+  fi
 fi
-if [ -z "${URL}" ]; then
-  URL="http://127.0.0.1:3080/"
+
+if [ -n "$URL" ]; then
+  printf '%s\n' "$URL" >"$URLFILE"
+  chmod 600 "$URLFILE"
+else
+  # Server is up but was started outside this launcher and no known token is valid:
+  # open the root, which works if the browser still holds a session cookie.
+  URL="http://$HOST:$PORT/"
 fi
+
+[ -n "${DSH_NO_WINDOW:-}" ] && exit 0
 open -na "Google Chrome" --args --app="$URL"
