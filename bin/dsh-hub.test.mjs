@@ -53,7 +53,7 @@ test("accounts --json lists providers, never secrets", async () => {
 });
 
 test("status: reachable -> 0, unreachable -> 1 with the data still printed", async () => {
-  const f = hubFetch({ "/healthz": [200, { ok: true }], "/status": [200, { signedIn: true, plan: { mode: "plan" }, imageCap: true, compactionSlim: true, spendGuard: true, access: { full: true } }] });
+  const f = hubFetch({ "/healthz": [200, { ok: true }], "/status": [200, { signedIn: true, plan: { mode: "plan" }, imageCap: true, compactionSlim: true, spendGuard: true }] });
   const r = await run(["status", "--json"], { fetch: f });
   assert.equal(r.code, 0);
   assert.equal(JSON.parse(r.out).hub.reachable, true);
@@ -189,4 +189,20 @@ test("--json errors are JSON on stdout with the exit code", async () => {
   const bad = await run(["spend", "--since", "nonsense", "--json"], { env: e.env });
   assert.equal(bad.code, 2);
   assert.equal(JSON.parse(bad.out).code, 2);
+});
+
+test("--json: a refused switch/unload is {error, code, httpStatus} like every other failure; secrets redacted", async () => {
+  const gpu = {
+    switch: async () => ({ status: 409, body: { error: "lease held; token=abc123SECRET" } }),
+    unload: async () => ({ status: 502, body: { detail: { error: { message: "unload failed Bearer xyz.secret" } } } }),
+  };
+  for (const [args, http] of [[["switch", "model-a", "--json"], 409], [["unload", "--json"], 502]]) {
+    const r = await run(args, { gpu });
+    assert.equal(r.code, 1);
+    const j = JSON.parse(r.out);
+    assert.equal(j.code, 1);
+    assert.equal(j.httpStatus, http);
+    assert.equal(typeof j.error, "string");
+    assert.doesNotMatch(r.out, /abc123SECRET|xyz\.secret/);
+  }
 });

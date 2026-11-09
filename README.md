@@ -123,7 +123,7 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
 
 Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` (price overrides),
-`prices.litellm.json` (24 h price-table cache), `accounts-state.json`, `provider-health.json`, `prefs.json`.
+`prices.litellm.json` (24 h price-table cache), `accounts-state.json`, `provider-health.json`.
 
 | Environment variable | Effect |
 |---|---|
@@ -142,10 +142,15 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   (what the API list price would be), price source and billing kind. **No prompt or completion text is stored.**
   Rotated at 20 MB; several DSH processes can append at once without losing rows.
 - **Caps** `caps.json`, defaults `{"dailyUsd":40,"sessionUsd":15,"perProviderDailyUsd":{},"warnPct":50}`; a cap of 0
-  turns it off. Only **metered** providers are ever blocked; subscription (Claude, Codex, Copilot, Kimi), free and
-  local providers never are. Steps already in flight when a cap trips can still finish.
+  turns it off. Only **metered** calls are ever blocked; subscription, free and local ones never are. Steps already
+  in flight when a cap trips can still finish.
+- **Billing kind**: a provider counts as **subscription** ($0 charged, API-list equivalent still recorded) only while
+  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi). The same provider used with an
+  API key is **metered**. Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
+  `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
-  (`{"provider/model": {"inPerM": 1.25, "outPerM": 10, "cacheReadPerM": 0.125}}`) win. A model with no known price
+  (`{"provider/model": {"inPerM": 1.25, "outPerM": 10, "cacheReadPerM": 0.125, "billing": "metered"}}`, `billing`
+  optional) win, and edits to the file apply without a restart. A model with no known price
   is `unpriced`, never guessed: its calls are stored at $0 and **do not count toward caps** — the Costs panel shows
   "N unpriced calls" and the host logs the model once, so you can add it to `prices.json`. If a provider has a
   `perProviderDailyUsd` cap, its unpriced models are blocked instead (their spend could not be counted).
@@ -189,7 +194,9 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
   works without configuration), plus `hub.allowedOrigins` / `DSH_HUB_ALLOWED_ORIGINS`.
 - Every state-changing request, and every read of a pending sign-in (whose authorize URL carries OAuth state),
   additionally needs the header `x-dsh-model-hub: 1`, a JSON body (≤ 16 KB) and an allowed `Origin`.
-- Responses, logs, CLI output and stored errors are passed through one redactor; the ledger never holds content.
+- Error text (API replies, CLI errors, stored account errors), host log lines and GPU process command lines pass
+  through one redactor: known token shapes, `key=` / `token=` style parameters, `--api-key` style flags and long
+  opaque strings. Ids, model names and file paths are not redacted. The ledger never holds prompt or completion text.
 - **Trust boundary:** programs running as *your* user are trusted — they can read DSH's credential store directly
   anyway. Other accounts on the same machine can reach loopback ports, so use it on a single-user machine.
 - No npm dependencies; the plugin loads DSH's own `yaml` and `sharp` from DSH's install (`DSH_NODE_MODULES`).
@@ -198,7 +205,7 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 
 | Route | What |
 |---|---|
-| `GET /healthz`, `/status` | health; features (imageCap, compactionSlim, spendGuard), Claude plan usage, access preset |
+| `GET /healthz`, `/status` | health and `webOrigin` (the DSH web origin this hub serves); `/status` adds features (imageCap, compactionSlim, spendGuard) and Claude plan usage |
 | `GET /accounts` | provider health, expiry, watchdog state, short redacted `lastError` |
 | `GET /accounts/flows`, `POST /accounts/signin {provider}`, `GET /accounts/signin/<p>`, `POST /accounts/signin/<p>/answer {text}`, `POST /accounts/signin/<p>/cancel` | DSH-native sign-in. A stuck attempt expires after 10 min; cancel is immediate |
 | `POST /accounts/refresh` | run the watchdog now |
@@ -208,7 +215,10 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 | `GET /gpu/config`, `/gpu/gpus`, `/gpu/models`, `POST /gpu/switch`, `POST /gpu/unload` | the GPU server (proxied); `/rocco/*` are kept as aliases |
 
 **Port 8185 is fixed** (the browser half of the plugin cannot discover another). If a second DSH instance starts,
-it logs that the port is in use and its Model hub panels show "not reachable"; cost capture and caps still run in it.
+its host logs that the port is in use and serves nothing; that instance's UI then reaches the *first* instance's hub.
+Its origin is normally not on the first one's allowlist, so its panels say "not reachable"; if you did allowlist it,
+the panels show a notice that the data belongs to the other instance. Cost capture and caps still run in every
+instance.
 
 ## Known limitations
 
@@ -216,7 +226,7 @@ it logs that the port is in use and its Model hub panels show "not reachable"; c
   or stop working without notice, in which case the card shows "unavailable" and nothing else is affected.
 - DSH does not expose a route's base URL to plugins, so self-hosted routes must be listed in `localProviders` to be
   priced at $0 (loopback/private auto-detection is implemented but cannot be wired yet).
-- One DSH instance per machine gets the Model hub panels (port 8185).
+- One DSH instance per machine gets working Model hub panels (port 8185); see [Host API](#host-api).
 
 ## macOS launcher
 
@@ -225,7 +235,9 @@ author's setup; see [`macos/README.md`](macos/README.md) before using it.
 
 ## Development
 
-`npm test` runs the suite (`node --test`, no dependencies). Plain ESM, Node built-ins only.
+`npm test` runs the suite (`node --test`, no npm dependencies). Plain ESM, Node built-ins only. Two integration
+tests use DSH's own `sharp` and `yaml`; they are skipped, not failed, when DSH is not installed (set
+`DSH_NODE_MODULES` to run them).
 
 ## License and attribution
 

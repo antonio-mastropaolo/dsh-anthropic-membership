@@ -100,6 +100,13 @@ export async function main(argv, io = {}) {
     }
   }
   const gpuFail = (r) => { throw new CliError(`${gpuName}: HTTP ${r.status} ${errMessage(r.body)}`.trim(), 1); };
+  // a refused switch/unload: same {error, code} shape as every other --json failure, plus the GPU server's status
+  const gpuReplyFail = (r) => {
+    const message = `${gpuName}: HTTP ${r.status} ${errMessage(r.body)}`.trim();
+    if (json) out(JSON.stringify({ error: message, code: 1, httpStatus: r.status }));
+    else err(message);
+    return 1;
+  };
   const needGpu = () => { if (!gpuConfigured) throw new CliError("no GPU server configured (see README: GPU server)", 2); };
 
   try {
@@ -111,7 +118,6 @@ export async function main(argv, io = {}) {
           `hub        ${b.hub.reachable ? "up" : "DOWN"} (${b.hub.url})`,
           `claude     ${b.signedIn ? "signed in" : "signed out"}${b.plan?.mode ? ` (${b.plan.mode})` : ""}`,
           `features   imageCap=${b.imageCap} compactionSlim=${b.compactionSlim} spendGuard=${b.spendGuard}`,
-          `access     ${b.access?.full ? "full" : "workspace-write"}`,
         ].join("\n"));
         return h.status === 200 ? 0 : 1;
       }
@@ -143,14 +149,16 @@ export async function main(argv, io = {}) {
           try { gpus = parseGpus(list); } catch (e) { throw new CliError(e.message, 2); }
         }
         const r = await gpu.switch(rest[0], gpus, { force: Boolean(flags.force), auto: Boolean(flags.auto) });
-        emit({ httpStatus: r.status, ...r.body }, (b) => `HTTP ${b.httpStatus} ${b.status ?? errMessage(b)}${b.gpus ? ` gpus=${b.gpus}` : ""}${b.was_pinned ? ` (was pinned to ${b.was_pinned})` : ""}`);
-        return r.status === 200 || r.status === 202 ? 0 : 1;
+        if (r.status !== 200 && r.status !== 202) return gpuReplyFail(r);
+        emit({ httpStatus: r.status, ...r.body }, (b) => `HTTP ${b.httpStatus} ${b.status ?? ""}${b.gpus ? ` gpus=${b.gpus}` : ""}${b.was_pinned ? ` (was pinned to ${b.was_pinned})` : ""}`);
+        return 0;
       }
       case "unload": {
         needGpu();
         const r = await gpu.unload();
-        emit({ httpStatus: r.status, ...r.body }, (b) => `HTTP ${b.httpStatus} ${b.status ?? errMessage(b)}`);
-        return r.status === 200 ? 0 : 1;
+        if (r.status !== 200) return gpuReplyFail(r);
+        emit({ httpStatus: r.status, ...r.body }, (b) => `HTTP ${b.httpStatus} ${b.status ?? "ok"}`);
+        return 0;
       }
       case "spend": {
         const since = flags.since ?? "today";
