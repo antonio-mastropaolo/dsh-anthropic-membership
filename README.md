@@ -66,6 +66,12 @@ Start `dsh web` (it serves on `http://127.0.0.1:3080` by default) and open **Set
 - **GPU server** (optional, off until configured): GPU cards with owners, load a model on chosen GPUs, unload,
   return to automatic placement — for any server that implements [the small HTTP contract below](#what-a-gpu-server-must-implement).
 - **`dsh-hub` CLI** for all of the above, scriptable with `--json`.
+- **Request changes** (each listed by `dsh-hub status` as a feature flag): images over 2000 px are downscaled before
+  a request is sent (`imageCap`, every provider, needs DSH's `sharp`); compaction requests are slimmed (long tool
+  output trimmed, images and reasoning replaced by short placeholders) so they fit the model's window
+  (`compactionSlim`); and only when a session **already** runs in DSH's `danger-full-access` sandbox mode, the
+  plugin removes needless `sandbox_permissions` / `justification` escalation arguments from tool calls and tells the
+  model so in one system-prompt sentence. It never changes the sandbox mode itself.
 
 The plugin does not add model routes: add providers (Google, OpenRouter, DashScope, a self-hosted server, …) in
 DSH's own **Settings → Models → Add model provider**; the hub then prices and caps them.
@@ -127,7 +133,7 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | Key | Meaning |
 |---|---|
 | `gpuServer` | the optional GPU server (see [GPU server](#gpu-server-optional)); `null` or absent = off |
-| `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. The providers with built-in pricing, `anthropic`, `dashscope`, `github-copilot`, `google`, `kimi-coding`, `ollama`, `ollama-cloud`, `openai-codex`, `openrouter` and `xai`, are never treated as local even if listed here |
+| `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. The providers with built-in pricing, `anthropic`, `dashscope`, `deepseek-account`, `deepseek-official`, `github-copilot`, `google`, `kimi-coding`, `ollama`, `ollama-cloud`, `openai-codex`, `openrouter` and `xai`, are never treated as local even if listed here |
 | `hub.allowedOrigins` | extra exact origins allowed to call the host API (see [Security model](#security-model)) |
 | `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Costs panel, besides models you actually used |
 | `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
@@ -148,18 +154,28 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 
 ## Costs, caps and the ledger
 
-- **Ledger** `spend.jsonl`: one row per model step with token counts, `usd` (what you are charged), `apiEquivUsd`
-  (what the API list price would be), price source and billing kind. **No prompt or completion text is stored.**
+- **Ledger** `spend.jsonl`: one row per model call DSH makes (chat steps, compaction, reviews, and a failed attempt
+  that reports token usage), taken from the call's own usage report, with token counts, `usd` (what you are charged),
+  `apiEquivUsd` (what the API list price would be), price source and billing kind. **No prompt or completion text is
+  stored.** If the ledger cannot be read (`ledger-unreadable`) or a row cannot be written (`ledger-unwritable`), metered
+  requests are held back until it can; `dsh-hub doctor` checks the data dir.
   Rotated at 20 MB; several DSH processes can append at once without losing rows. Rotation only renames and links
-  files, never deletes or rewrites them, and a read counts every ledger file it saw (once per file, by inode), so a
-  read that races a rotation by another process still includes all spend.
+  files, never deletes or rewrites them. A read counts every ledger file it saw (once per file, by inode) and reads
+  again while another process is rotating; if rotations still race it after five passes, the read is marked
+  incomplete. Then the spend guard holds metered requests back (`ledger-busy`, retry in a moment), and spend reports
+  say `"complete": false` (the UI shows `≥` and a "partial" note; `dsh-hub spend` exits 1).
 - **Caps** `caps.json`, defaults `{"dailyUsd":40,"sessionUsd":15,"perProviderDailyUsd":{},"warnPct":50}`; a cap of 0
   turns it off. `sessionUsd` counts a session's whole history, however old. Only **metered** calls are ever
   blocked; subscription, free and local ones never are. Steps already in flight when a cap trips can still finish.
+  A finished step counts at once. Only a model with no override or cached price waits for the first price-table load
+  before it is recorded; meanwhile the next metered request waits up to 3 s for it, then is held back
+  (`spend-pending`) rather than checked against a ledger that is missing that step. Each DSH session, a subagent's
+  included, has its own `sessionUsd` budget; the daily caps cover them all.
 - **Billing kind**: a provider counts as **subscription** ($0 charged, API-list equivalent still recorded) only while
-  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi) and the plugin can read that
-  sign-in (re-checked every 30 s). The same provider used with an API key, or while DSH's credential store cannot be
-  read, is **metered**: a failed read never reuses an earlier answer.
+  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi), its route in DSH does not name an
+  API key (`apiKeyEnv`; DSH sends that key instead of the sign-in), and the plugin can read both (re-checked every
+  30 s; `GET /status` shows `routeAuth`). The same provider used with an API key, or while DSH's credential store or
+  route config cannot be read, is **metered**: a failed read never reuses an earlier answer.
   Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
@@ -167,7 +183,9 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   optional) win, and edits to the file apply without a restart. A model with no known price
   is `unpriced`, never guessed: its calls are stored at $0 and **do not count toward caps** — the Costs panel shows
   "N unpriced calls" and the host logs the model once, so you can add it to `prices.json`. If a provider has a
-  `perProviderDailyUsd` cap, its unpriced models are blocked instead (their spend could not be counted).
+  `perProviderDailyUsd` cap, its unpriced models are blocked instead (their spend could not be counted). While no
+  price table could be loaded at all (first run offline, no cache), metered requests without a `prices.json` row are
+  held back (`prices-unavailable`) and the table is retried every minute.
 
 ## GPU server (optional)
 
@@ -207,8 +225,9 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
   default `http://127.0.0.1:3080` / `http://localhost:3080`, the origin DSH itself advertises (so a `dsh web --port N`
   works without configuration), plus `hub.allowedOrigins` / `DSH_HUB_ALLOWED_ORIGINS`.
 - Every state-changing request additionally needs the header `x-dsh-model-hub: 1`, an allowed `Origin`,
-  `Content-Type: application/json` and a JSON object body (≤ 16 KB). Every read of a pending sign-in (whose
-  authorize URL carries OAuth state) needs the header and an allowed `Origin`.
+  `Content-Type: application/json` and a JSON object body (≤ 16 KB). Every read except `GET /healthz` needs the header
+  too (a web page's `<img>` or `<script>` request cannot set it), and a read of a pending sign-in (whose authorize URL
+  carries OAuth state) also needs an allowed `Origin`. The UI opens or links a sign-in page only if it is `https:`.
 - Error text (host API errors; every string under the `error` / `errors` / `detail` / `details` / `message` /
   `reason` fields of every GPU server reply, arrays and nested objects included, whatever its status; every CLI
   error, argument errors and `doctor` failures included; stored account errors), host log lines and GPU process
@@ -222,7 +241,7 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 
 | Route | What |
 |---|---|
-| `GET /healthz`, `/status` | health and `webOrigin` (the DSH web origin this hub serves); `/status` adds features (imageCap, compactionSlim, spendGuard) and Claude plan usage |
+| `GET /healthz`, `/status` | health and `webOrigin` (the DSH web origin this hub serves); `/status` adds features (imageCap, compactionSlim, spendGuard), Claude plan usage and `routeAuth` (`apiKeyRoutes`: the routes DSH authenticates with an API key) |
 | `GET /accounts` | provider health, expiry, watchdog state, short redacted `lastError`; `credentialStore` (`live` / `disposed` / `none`: where a refreshed grant would be written, and whether DSH has replaced that store since the plugin started) |
 | `GET /accounts/flows`, `POST /accounts/signin {provider}`, `GET /accounts/signin/<p>`, `POST /accounts/signin/<p>/answer {text}`, `POST /accounts/signin/<p>/cancel` | DSH-native sign-in. A stuck attempt expires after 10 min; cancel is immediate |
 | `POST /accounts/refresh` | run the watchdog now |

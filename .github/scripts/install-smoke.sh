@@ -65,18 +65,24 @@ echo "healthz: ${H:-<none>}"
 [ "$(printf '%s' "$H" | json_get webOrigin)" = "\"$UI\"" ] || fail "webOrigin is not $UI"
 
 step "host API from the outside"
-S=$(curl -fsS "$HUB/status")
+HH='x-dsh-model-hub: 1' # every read but /healthz needs it (what the UI and the CLI send)
+code=$(curl -s -o /dev/null -w '%{http_code}' "$HUB/status")
+[ "$code" = "403" ] || fail "a GET without the hub header returned $code (an <img> tag could trigger it)"
+S=$(curl -fsS -H "$HH" "$HUB/status")
 echo "status: $(printf '%s' "$S" | json_get imageCap) imageCap, $(printf '%s' "$S" | json_get compactionSlim) compactionSlim, $(printf '%s' "$S" | json_get spendGuard) spendGuard"
 for k in imageCap compactionSlim spendGuard; do
   [ "$(printf '%s' "$S" | json_get "$k")" = "true" ] || fail "/status $k is not true"
 done
 [ "$(printf '%s' "$S" | json_get access)" = "undefined" ] || fail "/status still has an access field"
-[ "$(curl -fsS "$HUB/gpu/config" | json_get configured)" = "false" ] || fail "GPU server should be off by default"
-[ "$(curl -fsS "$HUB/hub/config" | json_get priceModels)" = "[]" ] || fail "priceModels should be empty by default"
-[ "$(curl -fsS "$HUB/spend?since=today" | json_get totals.calls)" = "0" ] || fail "a fresh ledger should be empty"
+# subscription billing needs DSH's route config: the plugin must be able to read it in a real DSH
+[ "$(printf '%s' "$S" | json_get routeAuth.known)" = "true" ] || fail "route auth unknown: DSH's route config could not be read"
+echo "API-key routes: $(printf '%s' "$S" | json_get routeAuth.apiKeyRoutes)"
+[ "$(curl -fsS -H "$HH" "$HUB/gpu/config" | json_get configured)" = "false" ] || fail "GPU server should be off by default"
+[ "$(curl -fsS -H "$HH" "$HUB/hub/config" | json_get priceModels)" = "[]" ] || fail "priceModels should be empty by default"
+[ "$(curl -fsS -H "$HH" "$HUB/spend?since=today" | json_get totals.calls)" = "0" ] || fail "a fresh ledger should be empty"
 
 # CORS: the UI origin is echoed, a hostile one gets nothing
-acao=$(curl -s -D - -o /dev/null -H "Origin: $UI" "$HUB/status" | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
+acao=$(curl -s -D - -o /dev/null -H "Origin: $UI" -H "$HH" "$HUB/status" | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
 [ "$acao" = "$UI" ] || fail "UI origin not allowed (got '$acao')"
 code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' "$HUB/status")
 [ "$code" = "403" ] || fail "hostile origin GET returned $code"

@@ -256,3 +256,34 @@ test("--json with no command is a JSON error too", async () => {
   assert.equal(r.code, 2);
   assert.equal(JSON.parse(r.out).code, 2);
 });
+
+test("the CLI sends the hub header on every GET, and a failing /status is a failing status", async () => {
+  const strict = (routes) => async (url, init = {}) => {
+    const p = new URL(url).pathname;
+    if (p !== "/healthz" && (init.headers || {})["x-dsh-model-hub"] !== "1") return { status: 403, json: async () => ({ error: "missing x-dsh-model-hub header" }) };
+    const r = routes[p];
+    if (!r) throw new Error("ECONNREFUSED");
+    return { status: r.status ?? 200, json: async () => r.body ?? {} };
+  };
+  const ok = await run(["status", "--json"], { fetch: strict({ "/healthz": { body: { ok: true } }, "/status": { body: { signedIn: true, plan: { mode: "subscription" }, spendGuard: true } } }) });
+  assert.equal(ok.code, 0, ok.out + ok.err);
+  const bad = await run(["status", "--json"], { fetch: strict({ "/healthz": { body: { ok: true } }, "/status": { status: 500, body: { error: "internal error" } } }) });
+  assert.notEqual(bad.code, 0);
+  assert.match(JSON.parse(bad.out).error, /\/status failed: HTTP 500/);
+});
+
+test("doctor talks to a header-checking host like the real one: every host check passes, none is a false 'not reachable'", async () => {
+  const strict = async (url, init = {}) => {
+    if (!String(url).includes("hub.test")) throw new Error("offline");
+    const p = new URL(url).pathname;
+    if (p !== "/healthz" && (init.headers || {})["x-dsh-model-hub"] !== "1") return { status: 403, json: async () => ({ error: "missing x-dsh-model-hub header" }) };
+    const body = { "/healthz": { ok: true }, "/status": { imageCap: true, compactionSlim: true, spendGuard: true }, "/accounts": { accounts: [], reportOnly: false, credentialStore: { state: "live", replacedSinceStart: false } } }[p];
+    if (!body) throw new Error("ECONNREFUSED");
+    return { status: 200, json: async () => body };
+  };
+  const r = await run(["doctor", "--json"], { fetch: strict, rocco: gpuOk });
+  const j = JSON.parse(r.out);
+  const host = j.checks.filter((c) => c.name === "host API");
+  assert.ok(host.length >= 1 && host.every((c) => c.level === "ok"), JSON.stringify(host));
+  assert.equal(j.checks.find((c) => c.name === "credential store")?.level, "ok", "the /accounts read carries the header too");
+});

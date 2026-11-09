@@ -17,6 +17,9 @@ import { createCostEngine, DEFAULT_DATA_DIR } from "../lib/host/engine.mjs";
 import { loadConfig } from "../lib/config.mjs";
 import { createGpuClient, errMessage, MODEL_RE, parseGpus } from "../lib/host/gpu.mjs";
 
+// the host API answers GETs (other than /healthz) only with this header, as the web UI sends it
+const HUB_HEADERS = Object.freeze({ "x-dsh-model-hub": "1" });
+
 const HUB_URL = "http://127.0.0.1:8185";
 const USAGE = `usage: dsh-hub <command> [--json]
   status                      host API health + plugin features + plan
@@ -102,7 +105,7 @@ export async function main(argv, io = {}) {
 
   async function hubGet(path) {
     try {
-      const r = await fetchImpl(`${hubUrl}${path}`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetchImpl(`${hubUrl}${path}`, { headers: HUB_HEADERS, signal: AbortSignal.timeout(8000) });
       const body = await r.json().catch(() => ({}));
       return { status: r.status, body };
     } catch {
@@ -130,6 +133,7 @@ export async function main(argv, io = {}) {
           `features   imageCap=${b.imageCap} compactionSlim=${b.compactionSlim} spendGuard=${b.spendGuard}`,
         ].join("\n");
         if (h.status !== 200) return emitFailed(body, human, `host API unhealthy: /healthz HTTP ${h.status}`);
+        if (s.status !== 200) return emitFailed(body, human, `host API /status failed: HTTP ${s.status}`);
         emit(body, human);
         return 0;
       }
@@ -180,11 +184,13 @@ export async function main(argv, io = {}) {
         const by = flags.by ?? "provider";
         if (!/^(today|7d|30d|all)$/.test(since) || !["provider", "model", "session", "day"].includes(by)) throw new CliError("bad --since/--by", 2);
         const rep = await createCostEngine({ dataDir, localProviders: cfg.localProviders }).spendReport({ since, by });
-        emit(rep, (r) => [
+        const human = (r) => [
           `${r.since}: ${fmtUsd(r.totals.usd)} charged, ${fmtUsd(r.totals.apiEquivUsd)} API-equivalent, ${r.totals.calls} calls`,
           ...Object.entries(r.groups ?? {}).map(([k, v]) => `  ${k.padEnd(28)} ${fmtUsd(v.usd).padStart(9)}  api-eq ${fmtUsd(v.apiEquivUsd).padStart(9)}  ${v.calls} calls`),
           `caps: daily ${fmtUsd(r.caps.limits.dailyUsd)} session ${fmtUsd(r.caps.limits.sessionUsd)}  status ${r.caps.action} (${r.caps.reason})`,
-        ].join("\n"));
+        ].join("\n");
+        if (rep.complete === false) return emitFailed(rep, human, "partial totals: another DSH process kept rotating the ledger while it was read; run it again");
+        emit(rep, human);
         return 0;
       }
       case "prices": {
@@ -229,12 +235,12 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
     add("host API", r.status === 200 ? "ok" : "fail", `${hubUrl}/healthz HTTP ${r.status}`);
     // where refreshed grants are written: DSH's credential store as the running host sees it now
     try {
-      const a = await (await fetchImpl(`${hubUrl}/accounts`, { signal: AbortSignal.timeout(8000) })).json();
+      const a = await (await fetchImpl(`${hubUrl}/accounts`, { headers: HUB_HEADERS, signal: AbortSignal.timeout(8000) })).json();
       const cs = a?.credentialStore;
       if (cs && cs.state) add("credential store", cs.state === "live" ? "ok" : cs.state === "none" && a.reportOnly ? "warn" : "fail",
         cs.state === "live" ? "live (grant refresh can write)" : cs.state === "none" ? "not available (watchdog is report-only)" : "disposed: grant refresh would fail");
     } catch { /* older host: no such field */ }
-    const s = await (await fetchImpl(`${hubUrl}/status`, { signal: AbortSignal.timeout(8000) })).json();
+    const s = await (await fetchImpl(`${hubUrl}/status`, { headers: HUB_HEADERS, signal: AbortSignal.timeout(8000) })).json();
     add("guards", s.spendGuard && s.compactionSlim && s.imageCap ? "ok" : "warn", `imageCap=${s.imageCap} compactionSlim=${s.compactionSlim} spendGuard=${s.spendGuard}`);
   } catch { add("host API", "fail", `not reachable at ${hubUrl}`); }
 

@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # DSH version the plugin is tested against (README: DSH >= 0.2.2).
+  # DSH version the plugin is tested against (README: DSH >= 0.2.2-rc.1).
   DSH_VERSION: 0.2.2-rc.1
   PNPM_VERSION: '9'
 
