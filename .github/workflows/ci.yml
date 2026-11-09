@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only token; no secrets are used anywhere in this workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # DSH version the plugin is tested against (README: DSH >= 0.2.2).
+  DSH_VERSION: 0.2.2-rc.1
+
+jobs:
+  unit:
+    name: npm test, no DSH (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22.12', '24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # DSH is not installed here: the 4 tests that need DSH's own yaml/sharp must skip, nothing may fail.
+      - name: npm test
+        run: |
+          npm test 2>&1 | tee test.log
+          grep -Eq '^(ℹ|#) fail 0$' test.log
+          grep -Eq '^(ℹ|#) skipped 4$' test.log
+
+  with-dsh:
+    name: with DSH (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install DeepSeek Harness
+        run: |
+          npm install -g "@deepseek-ai/dsh@${DSH_VERSION}"
+          dsh --version
+      # With DSH installed every test runs: nothing may skip. DSH_NODE_MODULES is deliberately NOT set, so this
+      # also proves the plugin finds a standard global install on its own.
+      - name: npm test (all integration tests run)
+        run: |
+          npm test 2>&1 | tee test.log
+          grep -Eq '^(ℹ|#) fail 0$' test.log
+          grep -Eq '^(ℹ|#) skipped 0$' test.log
+      # The README's Install steps, verbatim, in a throwaway DSH_HOME; then a live check of the host API; then
+      # the README's Uninstall steps.
+      - name: Install per README, run dsh web, check the hub, uninstall
+        run: bash .github/scripts/install-smoke.sh

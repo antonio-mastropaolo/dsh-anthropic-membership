@@ -1,5 +1,7 @@
 # dsh-model-hub
 
+[![CI](https://github.com/antonio-mastropaolo/dsh-model-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/antonio-mastropaolo/dsh-model-hub/actions/workflows/ci.yml)
+
 A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH ≥ 0.2.2) that adds a
 **Model hub** to Settings → Models: provider accounts with DSH-native sign-in and a refresh watchdog, a per-model
 cost ledger with spend caps, prompt-cache checks, an optional GPU-server panel, and a `dsh-hub` CLI.
@@ -7,7 +9,9 @@ cost ledger with spend caps, prompt-cache checks, an optional GPU-server panel, 
 
 ## Install
 
-Requirements: Node ≥ 22.12 and DSH ≥ 0.2.2 (`npm i -g @deepseek-ai/dsh`). macOS or Linux.
+Requirements: DSH ≥ 0.2.2 (`npm i -g @deepseek-ai/dsh`, which itself needs Node ≥ 24.9). macOS or Linux. The `dsh-hub`
+CLI and the test suite run on Node ≥ 22.12. CI installs the plugin exactly as below on Ubuntu and macOS and checks
+the running host API ([`.github/scripts/install-smoke.sh`](.github/scripts/install-smoke.sh)).
 
 ```sh
 git clone https://github.com/antonio-mastropaolo/dsh-model-hub.git
@@ -40,8 +44,9 @@ Start `dsh web` (it serves on `http://127.0.0.1:3080` by default) and open **Set
 - **Uninstall:** delete the three `insert` lines from `cordis.patch.yml` (if no entry is left, put back a line `[]`),
   then `dsh plugin --profile web remove -w @local/dsh-model-hub`.
 - The package is named `@local/dsh-model-hub` and marked `private`: it is not published to npm; install it from a clone.
-- If your `dsh` is not an npm global under Homebrew or `/usr/local`, set `DSH_NODE_MODULES` to the `node_modules`
-  directory of the installed `@deepseek-ai/dsh` package. Without it the plugin still loads and costs, caps, cache
+- The plugin finds DSH's own packages in a standard `npm i -g` install (the global prefix of the Node running DSH,
+  or through the `dsh` link). Otherwise set `DSH_NODE_MODULES` to the `node_modules` directory of the installed
+  `@deepseek-ai/dsh` package. Without it the plugin still loads and costs, caps, cache
   checks and the GPU panel keep working; the account list and refresh watchdog, the Claude plan card and the
   request-image cap turn off (they use DSH's own `yaml`, `pi-ai` and `sharp`). The plugin then cannot see your
   sign-ins either, so Claude, Codex, Copilot and Kimi calls are counted as **metered** (priced and capped) until
