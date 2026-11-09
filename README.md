@@ -43,7 +43,9 @@ Start `dsh web` (it serves on `http://127.0.0.1:3080` by default) and open **Set
 - If your `dsh` is not an npm global under Homebrew or `/usr/local`, set `DSH_NODE_MODULES` to the `node_modules`
   directory of the installed `@deepseek-ai/dsh` package. Without it the plugin still loads and costs, caps, cache
   checks and the GPU panel keep working; the account list and refresh watchdog, the Claude plan card and the
-  request-image cap turn off (they use DSH's own `yaml`, `pi-ai` and `sharp`).
+  request-image cap turn off (they use DSH's own `yaml`, `pi-ai` and `sharp`). The plugin then cannot see your
+  sign-ins either, so Claude, Codex, Copilot and Kimi calls are counted as **metered** (priced and capped) until
+  it can.
 
 ## What it adds
 
@@ -119,7 +121,7 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | `gpuServer` | the optional GPU server (see [GPU server](#gpu-server-optional)); `null` or absent = off |
 | `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. A provider the price table knows as metered or subscription (e.g. `google`, `anthropic`) is never treated as local |
 | `hub.allowedOrigins` | extra exact origins allowed to call the host API (see [Security model](#security-model)) |
-| `priceModels` | `provider/model` rows always shown in the Costs panel (besides models you actually used) |
+| `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Costs panel, besides models you actually used |
 | `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
 
 Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` (price overrides),
@@ -140,13 +142,15 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 
 - **Ledger** `spend.jsonl`: one row per model step with token counts, `usd` (what you are charged), `apiEquivUsd`
   (what the API list price would be), price source and billing kind. **No prompt or completion text is stored.**
-  Rotated at 20 MB; several DSH processes can append at once without losing rows.
+  Rotated at 20 MB; several DSH processes can append at once without losing rows, and a read that races a
+  rotation by another process retries until it has a consistent view (a cap check never misses spend).
 - **Caps** `caps.json`, defaults `{"dailyUsd":40,"sessionUsd":15,"perProviderDailyUsd":{},"warnPct":50}`; a cap of 0
   turns it off. Only **metered** calls are ever blocked; subscription, free and local ones never are. Steps already
   in flight when a cap trips can still finish.
 - **Billing kind**: a provider counts as **subscription** ($0 charged, API-list equivalent still recorded) only while
-  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi). The same provider used with an
-  API key is **metered**. Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
+  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi) and the plugin can read that
+  sign-in. The same provider used with an API key, or while DSH's credential store cannot be read, is **metered**.
+  Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
   (`{"provider/model": {"inPerM": 1.25, "outPerM": 10, "cacheReadPerM": 0.125, "billing": "metered"}}`, `billing`
@@ -192,10 +196,12 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 - A request carrying a disallowed `Origin` is refused, so **web pages cannot use it**. Allowed UI origins: DSH's
   default `http://127.0.0.1:3080` / `http://localhost:3080`, the origin DSH itself advertises (so a `dsh web --port N`
   works without configuration), plus `hub.allowedOrigins` / `DSH_HUB_ALLOWED_ORIGINS`.
-- Every state-changing request, and every read of a pending sign-in (whose authorize URL carries OAuth state),
-  additionally needs the header `x-dsh-model-hub: 1`, a JSON body (≤ 16 KB) and an allowed `Origin`.
-- Error text (API replies, CLI errors, stored account errors), host log lines and GPU process command lines pass
-  through one redactor: known token shapes, `key=` / `token=` style parameters, `--api-key` style flags and long
+- Every state-changing request additionally needs the header `x-dsh-model-hub: 1`, an allowed `Origin`,
+  `Content-Type: application/json` and a JSON object body (≤ 16 KB). Every read of a pending sign-in (whose
+  authorize URL carries OAuth state) needs the header and an allowed `Origin`.
+- Error text (host API errors, the `error` / `detail` / `message` fields of every GPU server reply whatever its
+  status, CLI errors and `doctor` failures, stored account errors), host log lines and GPU process command lines
+  pass through one redactor: known token shapes, `key=` / `token=` style parameters, `--api-key` style flags and long
   opaque strings. Ids, model names and file paths are not redacted. The ledger never holds prompt or completion text.
 - **Trust boundary:** programs running as *your* user are trusted — they can read DSH's credential store directly
   anyway. Other accounts on the same machine can reach loopback ports, so use it on a single-user machine.
@@ -217,8 +223,8 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 **Port 8185 is fixed** (the browser half of the plugin cannot discover another). If a second DSH instance starts,
 its host logs that the port is in use and serves nothing; that instance's UI then reaches the *first* instance's hub.
 Its origin is normally not on the first one's allowlist, so its panels say "not reachable"; if you did allowlist it,
-the panels show a notice that the data belongs to the other instance. Cost capture and caps still run in every
-instance.
+the panels show a notice that the data belongs to the other instance and refuse every change (sign-in, GPU switch,
+refresh) — no request is sent. Cost capture and caps still run in every instance.
 
 ## Known limitations
 
@@ -235,7 +241,7 @@ author's setup; see [`macos/README.md`](macos/README.md) before using it.
 
 ## Development
 
-`npm test` runs the suite (`node --test`, no npm dependencies). Plain ESM, Node built-ins only. Two integration
+`npm test` runs the suite (`node --test`, no npm dependencies). Plain ESM, Node built-ins only. Four integration
 tests use DSH's own `sharp` and `yaml`; they are skipped, not failed, when DSH is not installed (set
 `DSH_NODE_MODULES` to run them).
 

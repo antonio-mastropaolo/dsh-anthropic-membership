@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { main } from "./dsh-hub.mjs";
+import { yamlAvailable } from "../lib/accounts/accounts.mjs";
+
+// integration tests that read a real credential file need DSH's own YAML parser
+const NEEDS_DSH = yamlAvailable() ? false : "DeepSeek Harness not installed (needs its yaml); set DSH_NODE_MODULES to run";
 
 const BIN = fileURLToPath(new URL("./dsh-hub.mjs", import.meta.url));
 
@@ -42,7 +46,7 @@ test("help / unknown / bad flags exit 2", async () => {
   assert.equal((await run(["spend", "--since", "yesterday"])).code, 2);
 });
 
-test("accounts --json lists providers, never secrets", async () => {
+test("accounts --json lists providers, never secrets", { skip: NEEDS_DSH }, async () => {
   const r = await run(["accounts", "--json"]);
   assert.equal(r.code, 0);
   const j = JSON.parse(r.out);
@@ -127,7 +131,7 @@ test("doctor: all good -> 0; hub down -> 1 with JSON checks", async () => {
   assert.equal(JSON.parse(bad.out).ok, false);
 });
 
-test("real process: runs via the bin entry, JSON on stdout, exit codes propagate", () => {
+test("real process: runs via the bin entry, JSON on stdout, exit codes propagate", { skip: NEEDS_DSH }, () => {
   const e = env();
   const r = spawnSync(process.execPath, [BIN, "accounts", "--json"], { env: { ...process.env, ...e.env }, encoding: "utf8" });
   assert.equal(r.status, 0);
@@ -205,4 +209,20 @@ test("--json: a refused switch/unload is {error, code, httpStatus} like every ot
     assert.equal(typeof j.error, "string");
     assert.doesNotMatch(r.out, /abc123SECRET|xyz\.secret/);
   }
+});
+
+test("doctor --json: a failing run carries {error, code} and never prints a GPU server's secret", async () => {
+  const gpu = {
+    health: async () => ({ status: 200, body: {} }),
+    gpus: async () => ({ status: 500, body: { error: "manager down token=SECRET123456 Bearer abc.xyz" } }),
+  };
+  const r = await run(["doctor", "--json"], { fetch: hubFetch({}), gpu });
+  assert.equal(r.code, 1);
+  const j = JSON.parse(r.out);
+  assert.equal(j.ok, false);
+  assert.equal(j.code, 1);
+  assert.match(j.error, /check\(s\) failed/);
+  assert.doesNotMatch(r.out, /SECRET123456|abc\.xyz/);
+  const h = await run(["doctor"], { fetch: hubFetch({}), gpu });
+  assert.doesNotMatch(h.out + h.err, /SECRET123456|abc\.xyz/);
 });

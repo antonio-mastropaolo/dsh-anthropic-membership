@@ -174,7 +174,10 @@ export async function main(argv, io = {}) {
       }
       case "prices": {
         if (rest.length < 1) throw new CliError("usage: dsh-hub prices <provider/model>…", 2);
-        const rep = await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders }).prices(rest);
+        // billing as the host sees it: subscription only for providers DSH holds an OAuth grant for
+        let oauthProviders = [];
+        try { oauthProviders = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) }).filter((a) => a.signedIn && a.kind === "oauth").map((a) => a.provider); } catch { /* none known: metered */ }
+        const rep = await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders, oauthProviders }).prices(rest);
         emit(rep, (r) => [`table: ${r.source} (${r.count} entries)`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n"));
         return Object.values(rep.models).every((p) => p.priced) ? 0 : 1;
       }
@@ -217,7 +220,7 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
       add(`${gpuName} server`, h.status === 200 ? "ok" : "fail", `HTTP ${h.status}`);
       const g = await gpu.gpus();
       if (g.status === 200 && g.body?.ok !== false) add(`${gpuName} manager`, g.body.stale ? "warn" : "ok", `state ${g.body.state_age_s}s old${g.body.stale ? " (STALE)" : ""}, loaded ${g.body.loaded_model ?? "none"}`);
-      else add(`${gpuName} manager`, "fail", String(g.body?.error ?? `HTTP ${g.status}`).slice(0, 160));
+      else add(`${gpuName} manager`, "fail", `HTTP ${g.status} ${errMessage(g.body)}`.slice(0, 160));
     } catch { add(`${gpuName} server`, "fail", "unreachable"); }
   }
   for (const e of cfg.errors) add("config.json", "warn", e);
@@ -227,7 +230,7 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
     const signed = accounts.filter((a) => a.signedIn);
     const bad = signed.filter((a) => a.health !== "ok");
     add("accounts", bad.length ? "warn" : "ok", signed.length ? signed.map((a) => `${a.provider}:${a.health}`).join(" ") : "no provider signed in");
-  } catch (e) { add("accounts", "fail", String(e?.message || e).slice(0, 120)); }
+  } catch (e) { add("accounts", "fail", redactSecrets(String(e?.message || e).slice(0, 120))); }
 
   const credFile = credentialsPath || join(dshHome(env), ".credentials.yaml");
   if (existsSync(credFile)) add("credentials file", mode(credFile) === "600" ? "ok" : "fail", `mode ${mode(credFile)}`);
@@ -240,14 +243,18 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
     add("caps", caps.warnings.length ? "warn" : "ok", `daily $${caps.limits.dailyUsd}, session $${caps.limits.sessionUsd}, today $${caps.todayUsd.toFixed(2)} (${caps.action})`);
     const p = await eng.prices(["google/gemini-3.8-flash"]);
     add("price table", p.count > 0 ? "ok" : "fail", `${p.source}, ${p.count} entries${p.warnings.length ? `, ${p.warnings.length} warnings` : ""}`);
-  } catch (e) { add("cost", "fail", String(e?.message || e).slice(0, 120)); }
+  } catch (e) { add("cost", "fail", redactSecrets(String(e?.message || e).slice(0, 120))); }
 
   // the ~/.local/bin symlink is optional convenience: report it, never warn about it
   const link = join(homedir(), ".local/bin/dsh-hub");
   add("CLI link", "ok", existsSync(link) ? link : "not installed (optional: ln -s <repo>/bin/dsh-hub.mjs ~/.local/bin/dsh-hub)");
   add("data dir path", "ok", dataDir);
 
-  const res = { ok: checks.every((c) => c.level !== "fail"), checks };
+  const failed = checks.filter((c) => c.level === "fail");
+  // a failing doctor follows the --json error convention too: {error, code} beside the checks
+  const res = failed.length
+    ? { ok: false, error: `${failed.length} check(s) failed: ${failed.map((c) => c.name).join(", ")}`, code: 1, checks }
+    : { ok: true, checks };
   emit(res, (r) => [...r.checks.map((c) => `${c.level.toUpperCase().padEnd(4)} ${c.name.padEnd(17)} ${c.detail}`), r.ok ? "doctor: OK" : "doctor: FAILED"].join("\n"));
   return res.ok ? 0 : 1;
 }
