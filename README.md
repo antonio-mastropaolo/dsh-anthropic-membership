@@ -155,10 +155,11 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 ## Costs, caps and the ledger
 
 - **Ledger** `spend.jsonl`: one row per model call DSH makes (chat steps, compaction, reviews, and a failed attempt
-  that reports token usage), taken from the call's own usage report, with token counts, `usd` (what you are charged),
+  that reports token usage), taken from the call's own usage report, with a random row `id`, token counts, `usd` (what you are charged),
   `apiEquivUsd` (what the API list price would be), price source and billing kind. **No prompt or completion text is
   stored.** If the ledger cannot be read (`ledger-unreadable`), metered requests are held back until it can. A row that
-  cannot be written (disk full, permissions) is kept in memory and written first as soon as the ledger accepts writes;
+  cannot be written (disk full, permissions) is kept in memory and written first as soon as the ledger accepts writes
+  (a write torn partway never merges with the next row, and a row that landed twice is counted once, by `id`);
   until then metered requests are held back (`ledger-unwritable`). Rows still unwritten when DSH exits are lost.
   `dsh-hub doctor` checks that the data dir and the ledger are readable and writable.
   Rotated at 20 MB; several DSH processes can append at once without losing rows. Rotation only renames and links
