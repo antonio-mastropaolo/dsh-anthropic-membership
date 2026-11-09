@@ -131,6 +131,7 @@ export async function main(argv, io = {}) {
           `hub        ${b.hub.reachable ? "up" : "DOWN"} (${b.hub.url})`,
           `claude     ${b.signedIn ? "signed in" : "signed out"}${b.plan?.mode ? ` (${b.plan.mode})` : ""}`,
           `features   imageCap=${b.imageCap} compactionSlim=${b.compactionSlim} spendGuard=${b.spendGuard}`,
+          ...(typeof b.plan?.messages === "number" && typeof b.plan?.modelCalls === "number" ? [`window     ${b.plan.messages} messages · ${b.plan.modelCalls} model calls sent from DSH`] : []),
         ].join("\n");
         if (h.status !== 200) return emitFailed(body, human, `host API unhealthy: /healthz HTTP ${h.status}`);
         if (s.status !== 200) return emitFailed(body, human, `host API /status failed: HTTP ${s.status}`);

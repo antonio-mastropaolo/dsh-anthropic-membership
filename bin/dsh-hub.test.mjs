@@ -334,3 +334,12 @@ test("a token in DSH_HUB_URL never reaches doctor or status output (JSON or huma
   assert.ok(!/DEMO-SECRET/.test(s.out), s.out);
   assert.match(JSON.parse(s.out).hub.url, /\[redacted\]/);
 });
+
+test("status shows DSH's own message and model-call counts when the host has them", async () => {
+  const f = async (url, init = {}) => {
+    const p = new URL(url).pathname;
+    if (p !== "/healthz" && (init.headers || {})["x-dsh-model-hub"] !== "1") return { status: 403, json: async () => ({}) };
+    return { status: 200, json: async () => (p === "/status" ? { signedIn: true, plan: { mode: "plan", messages: 13, modelCalls: 29 }, imageCap: true, compactionSlim: true, spendGuard: true } : { ok: true }) };
+  };
+  assert.match((await run(["status"], { fetch: f })).out, /13 messages · 29 model calls sent from DSH/);
+});

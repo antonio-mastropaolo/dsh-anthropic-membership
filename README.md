@@ -196,7 +196,8 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 ## GPU server (optional)
 
 The GPU panel, `gpus` / `switch` / `unload` and the `/gpu/*` routes are **off** until `config.json` names a GPU server.
-With none configured the panel is hidden, the GPU routes answer `{configured:false}` (POSTs `409`), and
+With none configured the panel is hidden, the GPU routes answer `{configured:false}` (POSTs: `409`
+`{"error":"no GPU server configured","configured":false}`), and
 `dsh-hub doctor` reports "not configured" (OK).
 
 `gpuServer` fields: `url` (http(s) base URL; optional path prefix; no credentials, query or fragment), `id` and `icon`
@@ -267,9 +268,10 @@ every instance.
 ## Known limitations
 
 - The Claude plan card (5-hour / weekly %) reads an **undocumented** Anthropic OAuth usage endpoint; it may change
-  or stop working without notice, in which case the card shows "unavailable" and nothing else is affected. Its
-  "sent from DSH this window" counts read DSH's session logs (zstd-compressed: Node's built-in zstd, else the `zstd`
-  program); when a log cannot be decoded the counts are left out rather than shown as 0.
+  or stop working without notice, in which case the card shows "unavailable" and nothing else is affected. The card
+  (and `dsh-hub status`) also shows how many messages and model calls DSH itself sent in the 5-hour window, read from
+  DSH's session logs (zstd-compressed: Node's built-in zstd, else the `zstd` program); when a log cannot be decoded
+  that line is left out rather than shown as 0.
 - DSH does not expose a route's base URL to plugins, so self-hosted routes must be listed in `localProviders` to be
   priced at $0 (loopback/private auto-detection is implemented but cannot be wired yet).
 - One DSH instance per machine gets working Model hub panels (port 8185); see [Host API](#host-api).
