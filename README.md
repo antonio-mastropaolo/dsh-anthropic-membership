@@ -252,7 +252,7 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 | `GET /accounts` | provider health, expiry, watchdog state, short redacted `lastError`; `credentialStore` (`live` / `disposed` / `none`: where a refreshed grant would be written, and whether DSH has replaced that store since the plugin started) |
 | `GET /accounts/flows`, `POST /accounts/signin {provider}`, `GET /accounts/signin/<p>`, `POST /accounts/signin/<p>/answer {text}`, `POST /accounts/signin/<p>/cancel` | DSH-native sign-in. A stuck attempt expires after 10 min; cancel is immediate |
 | `POST /accounts/refresh` | run the watchdog now |
-| `GET /spend?since=today\|7d\|30d\|all&by=provider\|model\|session\|day` | ledger totals (incl. `unpricedCalls`), caps status, `external` (extra ledgers, display only) |
+| `GET /spend?since=today\|7d\|30d\|all&by=provider\|model\|session\|day` | ledger totals (incl. `unpricedCalls`; each group's `billing` kind, or `mixed`), caps status (with the session in use and its `sessionSpentUsd`), `external` (extra ledgers, display only) |
 | `GET /prices?models=provider/model,...`, `GET /hub/config` | price rows + provider credit health; `priceModels` |
 | `GET /cache[?session=<id>]` | prompt-cache hit ratios |
 | `GET /gpu/config`, `/gpu/gpus`, `/gpu/models`, `POST /gpu/switch`, `POST /gpu/unload` | the GPU server (proxied); `/rocco/*` are kept as aliases |
