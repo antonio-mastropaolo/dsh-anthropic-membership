@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/antonio-mastropaolo/dsh-model-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/antonio-mastropaolo/dsh-model-hub/actions/workflows/ci.yml)
 
-A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH ≥ 0.2.2) that adds a
+A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH ≥ 0.2.2-rc.1) that adds a
 **Model hub** to Settings → Models: provider accounts with DSH-native sign-in and a refresh watchdog, a per-model
 cost ledger with spend caps, prompt-cache checks, an optional GPU-server panel, and a `dsh-hub` CLI.
 (Formerly `dsh-anthropic-membership`; that URL redirects here.)
 
 ## Install
 
-Requirements: DSH ≥ 0.2.2 (`npm i -g @deepseek-ai/dsh`, which itself needs Node ≥ 24.9) and `pnpm` on your `PATH`
+Requirements: DSH ≥ 0.2.2-rc.1, the current `latest` release (`npm i -g @deepseek-ai/dsh`, which itself needs Node ≥ 24.9) and `pnpm` on your `PATH`
 (`npm i -g pnpm`: `dsh plugin` installs plugins with it; CI uses pnpm 9). macOS or Linux. The `dsh-hub` CLI and the
 test suite run on Node ≥ 22.12. CI installs the plugin exactly as below on Ubuntu and macOS and checks
 the running host API ([`.github/scripts/install-smoke.sh`](.github/scripts/install-smoke.sh)).
@@ -127,7 +127,7 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | Key | Meaning |
 |---|---|
 | `gpuServer` | the optional GPU server (see [GPU server](#gpu-server-optional)); `null` or absent = off |
-| `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. A provider the price table knows as metered or subscription (e.g. `google`, `anthropic`) is never treated as local |
+| `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. The providers with built-in pricing, `anthropic`, `dashscope`, `github-copilot`, `google`, `kimi-coding`, `ollama`, `ollama-cloud`, `openai-codex`, `openrouter` and `xai`, are never treated as local even if listed here |
 | `hub.allowedOrigins` | extra exact origins allowed to call the host API (see [Security model](#security-model)) |
 | `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Costs panel, besides models you actually used |
 | `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
