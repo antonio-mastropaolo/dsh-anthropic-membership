@@ -66,7 +66,7 @@ Start `dsh web` (it serves on `http://127.0.0.1:3080` by default) and open **Set
 - **GPU server** (optional, off until configured): GPU cards with owners, load a model on chosen GPUs, unload,
   return to automatic placement — for any server that implements [the small HTTP contract below](#what-a-gpu-server-must-implement).
 - **`dsh-hub` CLI** for all of the above, scriptable with `--json`.
-- **Request changes** (each listed by `dsh-hub status` as a feature flag): images over 2000 px are downscaled before
+- **Request changes** (`imageCap` and `compactionSlim` are listed by `dsh-hub status` as feature flags): images over 2000 px are downscaled before
   a request is sent (`imageCap`, every provider, needs DSH's `sharp`); compaction requests are slimmed (long tool
   output trimmed, images and reasoning replaced by short placeholders) so they fit the model's window
   (`compactionSlim`); and only when a session **already** runs in DSH's `danger-full-access` sandbox mode, the
@@ -157,8 +157,10 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 - **Ledger** `spend.jsonl`: one row per model call DSH makes (chat steps, compaction, reviews, and a failed attempt
   that reports token usage), taken from the call's own usage report, with token counts, `usd` (what you are charged),
   `apiEquivUsd` (what the API list price would be), price source and billing kind. **No prompt or completion text is
-  stored.** If the ledger cannot be read (`ledger-unreadable`) or a row cannot be written (`ledger-unwritable`), metered
-  requests are held back until it can; `dsh-hub doctor` checks the data dir.
+  stored.** If the ledger cannot be read (`ledger-unreadable`), metered requests are held back until it can. A row that
+  cannot be written (disk full, permissions) is kept in memory and written first as soon as the ledger accepts writes;
+  until then metered requests are held back (`ledger-unwritable`). Rows still unwritten when DSH exits are lost.
+  `dsh-hub doctor` checks that the data dir and the ledger are readable and writable.
   Rotated at 20 MB; several DSH processes can append at once without losing rows. Rotation only renames and links
   files, never deletes or rewrites them. A read counts every ledger file it saw (once per file, by inode) and reads
   again while another process is rotating; if rotations still race it after five passes, the read is marked
@@ -175,7 +177,8 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi), its route in DSH does not name an
   API key (`apiKeyEnv`; DSH sends that key instead of the sign-in), and the plugin can read both (re-checked every
   30 s; `GET /status` shows `routeAuth`). The same provider used with an API key, or while DSH's credential store or
-  route config cannot be read, is **metered**: a failed read never reuses an earlier answer.
+  route config cannot be read, is **metered**: a failed read never reuses an earlier answer. `dsh-hub prices` asks the
+  running host for the route config and, when the host is not reachable, does not assume subscription.
   Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
@@ -273,7 +276,7 @@ author's setup; see [`macos/README.md`](macos/README.md) before using it.
 
 ## Development
 
-`npm test` runs the suite (`node --test`, no npm dependencies). Plain ESM, Node built-ins only. Four integration
+`npm test` runs the suite (`node --test`, no npm dependencies). Plain ESM, Node built-ins only. Five integration
 tests use DSH's own `sharp` and `yaml`; they are skipped, not failed, when DSH is not installed (set
 `DSH_NODE_MODULES` to run them).
 

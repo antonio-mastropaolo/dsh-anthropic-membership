@@ -287,3 +287,32 @@ test("doctor talks to a header-checking host like the real one: every host check
   assert.ok(host.length >= 1 && host.every((c) => c.level === "ok"), JSON.stringify(host));
   assert.equal(j.checks.find((c) => c.name === "credential store")?.level, "ok", "the /accounts read carries the header too");
 });
+
+test("prices: billing follows the host's route auth; without the host nothing is assumed subscription", { skip: NEEDS_DSH }, async () => {
+  const withHost = (routeAuth) => async (url, init = {}) => {
+    const u = String(url);
+    if (!u.includes("hub.test")) throw new Error("offline");
+    if (new URL(u).pathname === "/status" && (init.headers || {})["x-dsh-model-hub"] === "1") return { status: 200, json: async () => ({ routeAuth }) };
+    throw new Error("ECONNREFUSED");
+  };
+  const billing = async (fetch) => JSON.parse((await run(["prices", "anthropic/claude-opus-5-5", "--json"], { fetch })).out).models["anthropic/claude-opus-5-5"].billing;
+  assert.equal(await billing(withHost({ known: true, apiKeyRoutes: [] })), "subscription", "OAuth grant, OAuth route");
+  assert.equal(await billing(withHost({ known: true, apiKeyRoutes: ["anthropic"] })), "metered", "the route sends an API key");
+  assert.equal(await billing(async () => { throw new Error("ECONNREFUSED"); }), "metered", "host not reachable");
+});
+
+test("doctor fails when the spend ledger cannot be read, whatever the data dir's mode bits say", async () => {
+  const e = env();
+  const dataDir = e.env.DSH_HUB_DATA_DIR;
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  chmodSync(dataDir, 0o700);
+  writeFileSync(join(dataDir, "spend.jsonl"), JSON.stringify({ ts: new Date().toISOString(), sessionId: "s", provider: "google", model: "m", usd: 5, billing: "metered" }) + "\n");
+  chmodSync(join(dataDir, "spend.jsonl"), 0o000);
+  try {
+    const f = hubFetch({ "/healthz": [200, {}], "/status": [200, { imageCap: true, compactionSlim: true, spendGuard: true }] });
+    const r = await run(["doctor", "--json"], { fetch: f, rocco: gpuOk, e });
+    const j = JSON.parse(r.out);
+    assert.equal(r.code, 1);
+    assert.equal(j.checks.find((c) => c.name === "spend ledger")?.level, "fail");
+  } finally { chmodSync(join(dataDir, "spend.jsonl"), 0o600); }
+});

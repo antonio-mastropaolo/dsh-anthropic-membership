@@ -8,7 +8,7 @@
  */
 import { dshHome } from "../lib/paths.mjs";
 import { redactSecrets } from "../lib/accounts/errors.mjs";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -189,17 +189,25 @@ export async function main(argv, io = {}) {
           ...Object.entries(r.groups ?? {}).map(([k, v]) => `  ${k.padEnd(28)} ${fmtUsd(v.usd).padStart(9)}  api-eq ${fmtUsd(v.apiEquivUsd).padStart(9)}  ${v.calls} calls`),
           `caps: daily ${fmtUsd(r.caps.limits.dailyUsd)} session ${fmtUsd(r.caps.limits.sessionUsd)}  status ${r.caps.action} (${r.caps.reason})`,
         ].join("\n");
+        if (rep.unreadable) return emitFailed(rep, human, "partial totals: the spend ledger could not be read (see dsh-hub doctor)");
         if (rep.complete === false) return emitFailed(rep, human, "partial totals: another DSH process kept rotating the ledger while it was read; run it again");
         emit(rep, human);
         return 0;
       }
       case "prices": {
         if (rest.length < 1) throw new CliError("usage: dsh-hub prices <provider/model>…", 2);
-        // billing as the host sees it: subscription only for providers DSH holds an OAuth grant for
+        // Billing as the host decides it: subscription only for a provider DSH holds an OAuth grant for AND whose route
+        // sends no API key. Which routes send a key only the running host can tell (GET /status routeAuth); without
+        // it nothing is assumed to be subscription.
+        let routeAuth = null;
+        try { const s = await hubGet("/status"); if (s.status === 200 && s.body?.routeAuth?.known === true) routeAuth = s.body.routeAuth; } catch { /* host not reachable */ }
         let oauthProviders = [];
-        try { oauthProviders = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) }).filter((a) => a.signedIn && a.kind === "oauth").map((a) => a.provider); } catch { /* none known: metered */ }
-        const rep = await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders, oauthProviders }).prices(rest);
-        const human = (r) => [`table: ${r.source} (${r.count} entries)`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n");
+        if (routeAuth) {
+          const keyed = Array.isArray(routeAuth.apiKeyRoutes) ? routeAuth.apiKeyRoutes : [];
+          try { oauthProviders = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) }).filter((a) => a.signedIn && a.kind === "oauth" && !keyed.includes(a.provider)).map((a) => a.provider); } catch { /* none known: metered */ }
+        }
+        const rep = { ...(await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders, oauthProviders }).prices(rest)), routeAuth: routeAuth ? "host" : "unknown" };
+        const human = (r) => [`table: ${r.source} (${r.count} entries)${r.routeAuth === "unknown" ? "; host not reachable, so subscription billing is not assumed" : ""}`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n");
         const unpriced = Object.entries(rep.models).filter(([, p]) => !p.priced).map(([k]) => k);
         if (unpriced.length) return emitFailed(rep, human, `no known price for ${unpriced.join(", ")}`);
         emit(rep, human);
@@ -267,11 +275,20 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
   if (existsSync(credFile)) add("credentials file", mode(credFile) === "600" ? "ok" : "fail", `mode ${mode(credFile)}`);
   if (existsSync(dataDir)) add("data dir", mode(dataDir) === "700" ? "ok" : "warn", `mode ${mode(dataDir)}`);
   else add("data dir", "warn", `${dataDir} does not exist yet (created on first spend)`);
+  // effective access, not just the mode bits: the spend guard refuses metered requests it cannot record or check
+  if (existsSync(dataDir)) {
+    const ledger = join(dataDir, "spend.jsonl");
+    const problems = [];
+    try { accessSync(dataDir, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK); } catch (e) { problems.push(`data dir ${e.code || "not accessible"}`); }
+    if (existsSync(ledger)) { try { accessSync(ledger, fsConstants.R_OK | fsConstants.W_OK); } catch (e) { problems.push(`spend.jsonl ${e.code || "not accessible"}`); } }
+    add("spend ledger", problems.length ? "fail" : "ok", problems.length ? `${problems.join(", ")}: metered requests are held back` : "readable and writable");
+  }
 
   try {
     const eng = createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders });
     const caps = eng.capsStatus();
-    add("caps", caps.warnings.length ? "warn" : "ok", `daily $${caps.limits.dailyUsd}, session $${caps.limits.sessionUsd}, today $${caps.todayUsd.toFixed(2)} (${caps.action})`);
+    if (caps.unreadable) add("caps", "fail", "the spend ledger could not be read: caps cannot be checked and metered requests are held back");
+    else add("caps", caps.warnings.length || caps.complete === false ? "warn" : "ok", `daily $${caps.limits.dailyUsd}, session $${caps.limits.sessionUsd}, today $${caps.todayUsd.toFixed(2)}${caps.complete === false ? " (partial: ledger rotating)" : ""} (${caps.action})`);
     const p = await eng.prices(["google/gemini-3.8-flash"]);
     add("price table", p.count > 0 ? "ok" : "fail", `${p.source}, ${p.count} entries${p.warnings.length ? `, ${p.warnings.length} warnings` : ""}`);
   } catch (e) { add("cost", "fail", redactSecrets(String(e?.message || e).slice(0, 120))); }

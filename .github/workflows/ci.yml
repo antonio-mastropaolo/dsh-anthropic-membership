@@ -36,12 +36,12 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
-      # DSH is not installed here: the 4 tests that need DSH's own yaml/sharp must skip, nothing may fail.
+      # DSH is not installed here: the 5 tests that need DSH's own yaml/sharp must skip, nothing may fail.
       - name: npm test
         run: |
           npm test 2>&1 | tee test.log
           grep -Eq '^(ℹ|#) fail 0$' test.log
-          grep -Eq '^(ℹ|#) skipped 4$' test.log
+          grep -Eq '^(ℹ|#) skipped 5$' test.log
 
   with-dsh:
     name: with DSH (${{ matrix.os }})
