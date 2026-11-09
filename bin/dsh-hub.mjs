@@ -126,7 +126,7 @@ export async function main(argv, io = {}) {
     switch (cmd) {
       case "status": {
         const [h, s] = await Promise.all([hubGet("/healthz"), hubGet("/status")]);
-        const body = { hub: { reachable: h.status === 200, url: hubUrl }, ...s.body };
+        const body = { hub: { reachable: h.status === 200, url: redactSecrets(hubUrl) }, ...s.body };
         const human = (b) => [
           `hub        ${b.hub.reachable ? "up" : "DOWN"} (${b.hub.url})`,
           `claude     ${b.signedIn ? "signed in" : "signed out"}${b.plan?.mode ? ` (${b.plan.mode})` : ""}`,
@@ -235,7 +235,8 @@ export async function main(argv, io = {}) {
 
 async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, gpuConfigured, gpuName, cfg, env }) {
   const checks = [];
-  const add = (name, level, detail) => checks.push({ name, level, detail });
+  // every check detail passes through the redactor (it can quote DSH_HUB_URL, a GPU server URL or an error message)
+  const add = (name, level, detail) => checks.push({ name, level, detail: redactSecrets(String(detail ?? "")) });
   const mode = (p) => (statSync(p).mode & 0o777).toString(8);
 
   try {

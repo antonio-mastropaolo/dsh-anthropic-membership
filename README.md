@@ -267,7 +267,9 @@ every instance.
 ## Known limitations
 
 - The Claude plan card (5-hour / weekly %) reads an **undocumented** Anthropic OAuth usage endpoint; it may change
-  or stop working without notice, in which case the card shows "unavailable" and nothing else is affected.
+  or stop working without notice, in which case the card shows "unavailable" and nothing else is affected. Its
+  "sent from DSH this window" counts read DSH's session logs (zstd-compressed: Node's built-in zstd, else the `zstd`
+  program); when a log cannot be decoded the counts are left out rather than shown as 0.
 - DSH does not expose a route's base URL to plugins, so self-hosted routes must be listed in `localProviders` to be
   priced at $0 (loopback/private auto-detection is implemented but cannot be wired yet).
 - One DSH instance per machine gets working Model hub panels (port 8185); see [Host API](#host-api).

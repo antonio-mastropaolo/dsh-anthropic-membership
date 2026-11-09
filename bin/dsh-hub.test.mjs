@@ -316,3 +316,21 @@ test("doctor fails when the spend ledger cannot be read, whatever the data dir's
     assert.equal(j.checks.find((c) => c.name === "spend ledger")?.level, "fail");
   } finally { chmodSync(join(dataDir, "spend.jsonl"), 0o600); }
 });
+
+test("a token in DSH_HUB_URL never reaches doctor or status output (JSON or human)", async () => {
+  const e = env();
+  e.env.DSH_HUB_URL = "http://hub.test/?token=DEMO-SECRET-12345678";
+  const down = async () => { throw new Error("ECONNREFUSED"); };
+  for (const args of [["doctor", "--json"], ["doctor"], ["status", "--json"], ["status"]]) {
+    const r = await run(args, { fetch: down, rocco: gpuOk, e });
+    assert.ok(!/DEMO-SECRET/.test(r.out + r.err), `${args.join(" ")}: ${r.out}${r.err}`);
+  }
+  const up = async (url, init = {}) => {
+    const p = new URL(url).pathname;
+    if (p !== "/healthz" && (init.headers || {})["x-dsh-model-hub"] !== "1") return { status: 403, json: async () => ({}) };
+    return { status: 200, json: async () => (p === "/status" ? { signedIn: false, plan: { mode: "signed-out" } } : { ok: true }) };
+  };
+  const s = await run(["status", "--json"], { fetch: up, e });
+  assert.ok(!/DEMO-SECRET/.test(s.out), s.out);
+  assert.match(JSON.parse(s.out).hub.url, /\[redacted\]/);
+});
