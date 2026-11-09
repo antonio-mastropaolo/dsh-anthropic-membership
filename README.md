@@ -159,7 +159,9 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   `apiEquivUsd` (what the API list price would be), price source and billing kind. **No prompt or completion text is
   stored.** If the ledger cannot be read (`ledger-unreadable`), metered requests are held back until it can. A row that
   cannot be written (disk full, permissions) is kept in memory and written first as soon as the ledger accepts writes
-  (a write torn partway never merges with the next row, and a row that landed twice is counted once, by `id`);
+  (each row is written in one write as its own line, `\n{row}\n`, so the file has a blank line between rows and a
+  write torn partway, even by another DSH process, never merges with another row; a row that landed twice is counted
+  once, by `id`; JSONL readers should skip blank lines);
   until then metered requests are held back (`ledger-unwritable`). Rows still unwritten when DSH exits are lost.
   `dsh-hub doctor` checks that the data dir and the ledger are readable and writable.
   Rotated at 20 MB; several DSH processes can append at once without losing rows. Rotation only renames and links
