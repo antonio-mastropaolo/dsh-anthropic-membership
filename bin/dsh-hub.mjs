@@ -227,6 +227,13 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
   try {
     const r = await fetchImpl(`${hubUrl}/healthz`, { signal: AbortSignal.timeout(4000) });
     add("host API", r.status === 200 ? "ok" : "fail", `${hubUrl}/healthz HTTP ${r.status}`);
+    // where refreshed grants are written: DSH's credential store as the running host sees it now
+    try {
+      const a = await (await fetchImpl(`${hubUrl}/accounts`, { signal: AbortSignal.timeout(8000) })).json();
+      const cs = a?.credentialStore;
+      if (cs && cs.state) add("credential store", cs.state === "live" ? "ok" : cs.state === "none" && a.reportOnly ? "warn" : "fail",
+        cs.state === "live" ? "live (grant refresh can write)" : cs.state === "none" ? "not available (watchdog is report-only)" : "disposed: grant refresh would fail");
+    } catch { /* older host: no such field */ }
     const s = await (await fetchImpl(`${hubUrl}/status`, { signal: AbortSignal.timeout(8000) })).json();
     add("guards", s.spendGuard && s.compactionSlim && s.imageCap ? "ok" : "warn", `imageCap=${s.imageCap} compactionSlim=${s.compactionSlim} spendGuard=${s.spendGuard}`);
   } catch { add("host API", "fail", `not reachable at ${hubUrl}`); }

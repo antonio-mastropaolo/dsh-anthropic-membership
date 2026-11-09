@@ -223,7 +223,7 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 | Route | What |
 |---|---|
 | `GET /healthz`, `/status` | health and `webOrigin` (the DSH web origin this hub serves); `/status` adds features (imageCap, compactionSlim, spendGuard) and Claude plan usage |
-| `GET /accounts` | provider health, expiry, watchdog state, short redacted `lastError` |
+| `GET /accounts` | provider health, expiry, watchdog state, short redacted `lastError`; `credentialStore` (`live` / `disposed` / `none`: where a refreshed grant would be written, and whether DSH has replaced that store since the plugin started) |
 | `GET /accounts/flows`, `POST /accounts/signin {provider}`, `GET /accounts/signin/<p>`, `POST /accounts/signin/<p>/answer {text}`, `POST /accounts/signin/<p>/cancel` | DSH-native sign-in. A stuck attempt expires after 10 min; cancel is immediate |
 | `POST /accounts/refresh` | run the watchdog now |
 | `GET /spend?since=today\|7d\|30d\|all&by=provider\|model\|session\|day` | ledger totals (incl. `unpricedCalls`), caps status, `external` (extra ledgers, display only) |
