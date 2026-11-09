@@ -9,8 +9,9 @@ cost ledger with spend caps, prompt-cache checks, an optional GPU-server panel, 
 
 ## Install
 
-Requirements: DSH ≥ 0.2.2 (`npm i -g @deepseek-ai/dsh`, which itself needs Node ≥ 24.9). macOS or Linux. The `dsh-hub`
-CLI and the test suite run on Node ≥ 22.12. CI installs the plugin exactly as below on Ubuntu and macOS and checks
+Requirements: DSH ≥ 0.2.2 (`npm i -g @deepseek-ai/dsh`, which itself needs Node ≥ 24.9) and `pnpm` on your `PATH`
+(`npm i -g pnpm`: `dsh plugin` installs plugins with it; CI uses pnpm 9). macOS or Linux. The `dsh-hub` CLI and the
+test suite run on Node ≥ 22.12. CI installs the plugin exactly as below on Ubuntu and macOS and checks
 the running host API ([`.github/scripts/install-smoke.sh`](.github/scripts/install-smoke.sh)).
 
 ```sh
@@ -84,7 +85,9 @@ programs sharing one grant log each other out. DSH keeps its own, separate grant
 
 ## `dsh-hub` CLI
 
-Every command takes `--json` (errors then come as `{"error": "...", "code": N}` on stdout, with the same exit code).
+Every command takes `--json`. Whenever a command exits non-zero, its JSON on stdout carries `"error"` and `"code"`
+(the exit code), next to the command's data when it has any (e.g. `prices` with an unpriced model, a failing
+`doctor`).
 
 ```
 dsh-hub status                      host API health, plugin features, Claude plan
@@ -147,14 +150,16 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 
 - **Ledger** `spend.jsonl`: one row per model step with token counts, `usd` (what you are charged), `apiEquivUsd`
   (what the API list price would be), price source and billing kind. **No prompt or completion text is stored.**
-  Rotated at 20 MB; several DSH processes can append at once without losing rows, and a read that races a
-  rotation by another process retries until it has a consistent view (a cap check never misses spend).
+  Rotated at 20 MB; several DSH processes can append at once without losing rows. Rotation only renames and links
+  files, never deletes or rewrites them, and a read counts every ledger file it saw (once per file, by inode), so a
+  read that races a rotation by another process still includes all spend.
 - **Caps** `caps.json`, defaults `{"dailyUsd":40,"sessionUsd":15,"perProviderDailyUsd":{},"warnPct":50}`; a cap of 0
-  turns it off. Only **metered** calls are ever blocked; subscription, free and local ones never are. Steps already
-  in flight when a cap trips can still finish.
+  turns it off. `sessionUsd` counts a session's whole history, however old. Only **metered** calls are ever
+  blocked; subscription, free and local ones never are. Steps already in flight when a cap trips can still finish.
 - **Billing kind**: a provider counts as **subscription** ($0 charged, API-list equivalent still recorded) only while
   DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi) and the plugin can read that
-  sign-in. The same provider used with an API key, or while DSH's credential store cannot be read, is **metered**.
+  sign-in (re-checked every 30 s). The same provider used with an API key, or while DSH's credential store cannot be
+  read, is **metered**: a failed read never reuses an earlier answer.
   Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
@@ -204,9 +209,10 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 - Every state-changing request additionally needs the header `x-dsh-model-hub: 1`, an allowed `Origin`,
   `Content-Type: application/json` and a JSON object body (≤ 16 KB). Every read of a pending sign-in (whose
   authorize URL carries OAuth state) needs the header and an allowed `Origin`.
-- Error text (host API errors, the `error` / `detail` / `message` fields of every GPU server reply whatever its
-  status, CLI errors and `doctor` failures, stored account errors), host log lines and GPU process command lines
-  pass through one redactor: known token shapes, `key=` / `token=` style parameters, `--api-key` style flags and long
+- Error text (host API errors; every string under the `error` / `errors` / `detail` / `details` / `message` /
+  `reason` fields of every GPU server reply, arrays and nested objects included, whatever its status; every CLI
+  error, argument errors and `doctor` failures included; stored account errors), host log lines and GPU process
+  command lines pass through one redactor: known token shapes, `key=` / `token=` style parameters, `--api-key` style flags and long
   opaque strings. Ids, model names and file paths are not redacted. The ledger never holds prompt or completion text.
 - **Trust boundary:** programs running as *your* user are trusted — they can read DSH's credential store directly
   anyway. Other accounts on the same machine can reach loopback ports, so use it on a single-user machine.
@@ -228,8 +234,10 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 **Port 8185 is fixed** (the browser half of the plugin cannot discover another). If a second DSH instance starts,
 its host logs that the port is in use and serves nothing; that instance's UI then reaches the *first* instance's hub.
 Its origin is normally not on the first one's allowlist, so its panels say "not reachable"; if you did allowlist it,
-the panels show a notice that the data belongs to the other instance and refuse every change (sign-in, GPU switch,
-refresh) — no request is sent. Cost capture and caps still run in every instance.
+the panels show a notice that the data belongs to the other instance. Every change (sign-in, GPU switch, refresh)
+first asks the hub which instance it belongs to and is sent only when that is positively this page's instance, so
+from another instance, or before the hub reports its owner, nothing is changed. Cost capture and caps still run in
+every instance.
 
 ## Known limitations
 

@@ -17,6 +17,7 @@ concurrency:
 env:
   # DSH version the plugin is tested against (README: DSH >= 0.2.2).
   DSH_VERSION: 0.2.2-rc.1
+  PNPM_VERSION: '9'
 
 jobs:
   unit:
@@ -29,10 +30,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         node: ['22.12', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
       # DSH is not installed here: the 4 tests that need DSH's own yaml/sharp must skip, nothing may fail.
@@ -51,16 +52,18 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
-      - name: Install DeepSeek Harness
+      # README requirements: DSH, and pnpm on PATH (`dsh plugin` installs plugins with it)
+      - name: Install DeepSeek Harness and pnpm
         run: |
-          npm install -g "@deepseek-ai/dsh@${DSH_VERSION}"
+          npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" "pnpm@${PNPM_VERSION}"
           dsh --version
+          pnpm --version
       # With DSH installed every test runs: nothing may skip. DSH_NODE_MODULES is deliberately NOT set, so this
       # also proves the plugin finds a standard global install on its own.
       - name: npm test (all integration tests run)

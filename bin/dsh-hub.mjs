@@ -77,18 +77,28 @@ export async function main(argv, io = {}) {
 
   // with --json, every failure is a JSON object on stdout ({error, code}) so scripts can parse it
   const wantsJson = Array.isArray(argv) && argv.includes("--json");
+  // every failure leaves through here: redacted, and with --json a {error, code} object on stdout
   const fail = (message, code) => {
-    if (wantsJson) out(JSON.stringify({ error: String(message), code }));
-    else err(message);
+    const m = redactSecrets(String(message));
+    if (wantsJson) out(JSON.stringify({ error: m, code }));
+    else err(m);
     return code;
   };
   let parsed;
-  try { parsed = parseArgs(argv); } catch (e) { if (!wantsJson) { err(e.message); err(USAGE); return e.code ?? 2; } return fail(e.message, e.code ?? 2); }
+  try { parsed = parseArgs(argv); } catch (e) { if (!wantsJson) { err(redactSecrets(e.message)); err(USAGE); return e.code ?? 2; } return fail(e.message, e.code ?? 2); }
   const { pos, flags } = parsed;
   const [cmd, ...rest] = pos;
+  if (!cmd && !flags.help && wantsJson) return fail("missing command (see dsh-hub help)", 2);
   if (!cmd || flags.help || cmd === "help") { (cmd || flags.help ? out : err)(USAGE); return cmd || flags.help ? 0 : 2; }
   const json = flags.json === true;
   const emit = (obj, human) => out(json ? JSON.stringify(obj, null, 2) : human(obj));
+  // a command that printed its data but did not succeed: the data plus the same {error, code} as any failure
+  const emitFailed = (obj, human, message, code = 1) => {
+    const m = redactSecrets(message);
+    if (json) out(JSON.stringify({ ...obj, error: m, code }, null, 2));
+    else { out(human(obj)); err(m); }
+    return code;
+  };
 
   async function hubGet(path) {
     try {
@@ -102,7 +112,7 @@ export async function main(argv, io = {}) {
   const gpuFail = (r) => { throw new CliError(`${gpuName}: HTTP ${r.status} ${errMessage(r.body)}`.trim(), 1); };
   // a refused switch/unload: same {error, code} shape as every other --json failure, plus the GPU server's status
   const gpuReplyFail = (r) => {
-    const message = `${gpuName}: HTTP ${r.status} ${errMessage(r.body)}`.trim();
+    const message = redactSecrets(`${gpuName}: HTTP ${r.status} ${errMessage(r.body)}`.trim());
     if (json) out(JSON.stringify({ error: message, code: 1, httpStatus: r.status }));
     else err(message);
     return 1;
@@ -114,18 +124,23 @@ export async function main(argv, io = {}) {
       case "status": {
         const [h, s] = await Promise.all([hubGet("/healthz"), hubGet("/status")]);
         const body = { hub: { reachable: h.status === 200, url: hubUrl }, ...s.body };
-        emit(body, (b) => [
+        const human = (b) => [
           `hub        ${b.hub.reachable ? "up" : "DOWN"} (${b.hub.url})`,
           `claude     ${b.signedIn ? "signed in" : "signed out"}${b.plan?.mode ? ` (${b.plan.mode})` : ""}`,
           `features   imageCap=${b.imageCap} compactionSlim=${b.compactionSlim} spendGuard=${b.spendGuard}`,
-        ].join("\n"));
-        return h.status === 200 ? 0 : 1;
+        ].join("\n");
+        if (h.status !== 200) return emitFailed(body, human, `host API unhealthy: /healthz HTTP ${h.status}`);
+        emit(body, human);
+        return 0;
       }
       case "accounts": {
         const accounts = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) });
-        emit({ accounts }, ({ accounts: a }) => a.map((x) =>
-          `${x.provider.padEnd(15)} ${x.health.padEnd(14)} ${x.signedIn ? `${x.kind} ${x.expiresAt ? fmtMs(x.expiresInMs) : ""}` : "not signed in"}${x.lastError ? `  err: ${x.lastError}` : ""}`).join("\n"));
-        return accounts.some((x) => x.health === "refresh-failed") ? 1 : 0;
+        const human = ({ accounts: a }) => a.map((x) =>
+          `${x.provider.padEnd(15)} ${x.health.padEnd(14)} ${x.signedIn ? `${x.kind} ${x.expiresAt ? fmtMs(x.expiresInMs) : ""}` : "not signed in"}${x.lastError ? `  err: ${x.lastError}` : ""}`).join("\n");
+        const broken = accounts.filter((x) => x.health === "refresh-failed").map((x) => x.provider);
+        if (broken.length) return emitFailed({ accounts }, human, `refresh failed for ${broken.join(", ")}: sign in again`);
+        emit({ accounts }, human);
+        return 0;
       }
       case "gpus": {
         needGpu();
@@ -178,8 +193,11 @@ export async function main(argv, io = {}) {
         let oauthProviders = [];
         try { oauthProviders = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) }).filter((a) => a.signedIn && a.kind === "oauth").map((a) => a.provider); } catch { /* none known: metered */ }
         const rep = await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders, oauthProviders }).prices(rest);
-        emit(rep, (r) => [`table: ${r.source} (${r.count} entries)`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n"));
-        return Object.values(rep.models).every((p) => p.priced) ? 0 : 1;
+        const human = (r) => [`table: ${r.source} (${r.count} entries)`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n");
+        const unpriced = Object.entries(rep.models).filter(([, p]) => !p.priced).map(([k]) => k);
+        if (unpriced.length) return emitFailed(rep, human, `no known price for ${unpriced.join(", ")}`);
+        emit(rep, human);
+        return 0;
       }
       case "cache": {
         const q = flags.session ? `?session=${encodeURIComponent(flags.session)}` : "";

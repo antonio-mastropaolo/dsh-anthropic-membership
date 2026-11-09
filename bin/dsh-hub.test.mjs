@@ -226,3 +226,33 @@ test("doctor --json: a failing run carries {error, code} and never prints a GPU 
   const h = await run(["doctor"], { fetch: hubFetch({}), gpu });
   assert.doesNotMatch(h.out + h.err, /SECRET123456|abc\.xyz/);
 });
+
+test("CLI: argument-parser errors are redacted; every nonzero --json result carries error and code", async () => {
+  const bad = await run(["status", "--sk-synthetic1234567890abcdef"]);
+  assert.notEqual(bad.code, 0);
+  assert.doesNotMatch(bad.out + bad.err, /sk-synthetic1234567890/);
+  const badJ = await run(["status", "--json", "--sk-synthetic1234567890abcdef"]);
+  assert.doesNotMatch(badJ.out + badJ.err, /sk-synthetic1234567890/);
+  assert.equal(JSON.parse(badJ.out).code, badJ.code);
+
+  const sick = hubFetch({ "/healthz": [503, { ok: false }], "/status": [200, { signedIn: false }] });
+  const s = await run(["status", "--json"], { fetch: sick });
+  assert.equal(s.code, 1);
+  const sj = JSON.parse(s.out);
+  assert.equal(sj.code, 1);
+  assert.match(sj.error, /HTTP 503/);
+  assert.equal(sj.hub.reachable, false, "the data is still there");
+
+  const offline = async () => { throw new Error("offline"); };
+  const p = await run(["prices", "acme/unknown-model-zz", "--json"], { fetch: offline });
+  assert.equal(p.code, 1);
+  const pj = JSON.parse(p.out);
+  assert.equal(pj.code, 1);
+  assert.match(pj.error, /no known price for acme\/unknown-model-zz/);
+});
+
+test("--json with no command is a JSON error too", async () => {
+  const r = await run(["--json"]);
+  assert.equal(r.code, 2);
+  assert.equal(JSON.parse(r.out).code, 2);
+});
