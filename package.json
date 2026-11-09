@@ -9,6 +9,9 @@
     "type": "git",
     "url": "git+https://github.com/antonio-mastropaolo/dsh-model-hub.git"
   },
+  "engines": {
+    "node": ">=22.12"
+  },
   "private": true,
   "type": "module",
   "main": "./lib/index.js",

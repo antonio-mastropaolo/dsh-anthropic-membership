@@ -6,6 +6,8 @@
  * Offline-capable: accounts, spend, prices (read the data dir). Needs DSH running: status, cache.
  * Talks to the configured GPU server (config.json) directly for gpus/switch/unload. Never prints secrets.
  */
+import { dshHome } from "../lib/paths.mjs";
+import { redactSecrets } from "../lib/accounts/errors.mjs";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -73,8 +75,15 @@ export async function main(argv, io = {}) {
   const gpuConfigured = Boolean(io.gpu || cfg.gpuServer);
   const gpuName = cfg.gpuServer?.name ?? "GPU server";
 
+  // with --json, every failure is a JSON object on stdout ({error, code}) so scripts can parse it
+  const wantsJson = Array.isArray(argv) && argv.includes("--json");
+  const fail = (message, code) => {
+    if (wantsJson) out(JSON.stringify({ error: String(message), code }));
+    else err(message);
+    return code;
+  };
   let parsed;
-  try { parsed = parseArgs(argv); } catch (e) { err(e.message); err(USAGE); return e.code ?? 2; }
+  try { parsed = parseArgs(argv); } catch (e) { if (!wantsJson) { err(e.message); err(USAGE); return e.code ?? 2; } return fail(e.message, e.code ?? 2); }
   const { pos, flags } = parsed;
   const [cmd, ...rest] = pos;
   if (!cmd || flags.help || cmd === "help") { (cmd || flags.help ? out : err)(USAGE); return cmd || flags.help ? 0 : 2; }
@@ -176,9 +185,8 @@ export async function main(argv, io = {}) {
         throw new CliError(`unknown command ${cmd}\n${USAGE}`, 2);
     }
   } catch (e) {
-    if (e instanceof CliError) { err(e.message); return e.code; }
-    err(`dsh-hub: ${String(e?.message || e).replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")}`);
-    return 1;
+    if (e instanceof CliError) return fail(redactSecrets(e.message), e.code);
+    return fail(`dsh-hub: ${redactSecrets(e?.message || e)}`, 1);
   }
 }
 
@@ -213,7 +221,7 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
     add("accounts", bad.length ? "warn" : "ok", signed.length ? signed.map((a) => `${a.provider}:${a.health}`).join(" ") : "no provider signed in");
   } catch (e) { add("accounts", "fail", String(e?.message || e).slice(0, 120)); }
 
-  const credFile = credentialsPath || join(env.DSH_HOME || join(homedir(), ".dsh"), ".credentials.yaml");
+  const credFile = credentialsPath || join(dshHome(env), ".credentials.yaml");
   if (existsSync(credFile)) add("credentials file", mode(credFile) === "600" ? "ok" : "fail", `mode ${mode(credFile)}`);
   if (existsSync(dataDir)) add("data dir", mode(dataDir) === "700" ? "ok" : "warn", `mode ${mode(dataDir)}`);
   else add("data dir", "warn", `${dataDir} does not exist yet (created on first spend)`);
@@ -226,8 +234,10 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
     add("price table", p.count > 0 ? "ok" : "fail", `${p.source}, ${p.count} entries${p.warnings.length ? `, ${p.warnings.length} warnings` : ""}`);
   } catch (e) { add("cost", "fail", String(e?.message || e).slice(0, 120)); }
 
+  // the ~/.local/bin symlink is optional convenience: report it, never warn about it
   const link = join(homedir(), ".local/bin/dsh-hub");
-  add("CLI link", existsSync(link) ? "ok" : "warn", existsSync(link) ? link : "~/.local/bin/dsh-hub missing");
+  add("CLI link", "ok", existsSync(link) ? link : "not installed (optional: ln -s <repo>/bin/dsh-hub.mjs ~/.local/bin/dsh-hub)");
+  add("data dir path", "ok", dataDir);
 
   const res = { ok: checks.every((c) => c.level !== "fail"), checks };
   emit(res, (r) => [...r.checks.map((c) => `${c.level.toUpperCase().padEnd(4)} ${c.name.padEnd(17)} ${c.detail}`), r.ok ? "doctor: OK" : "doctor: FAILED"].join("\n"));

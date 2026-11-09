@@ -178,3 +178,15 @@ test("configured via config.json: CLI talks to the config URL and uses the confi
   assert.deepEqual(seen, ["http://gpu.test:4010/v1/gpus"]);
   assert.match(r.err, /^Lab box: HTTP 502/);
 });
+
+test("--json errors are JSON on stdout with the exit code", async () => {
+  const e = env();
+  const r = await run(["status", "--json"], { env: { ...e.env, DSH_HUB_URL: "http://127.0.0.1:1" }, fetch: async () => { throw new Error("ECONNREFUSED"); } });
+  assert.equal(r.code, 3);
+  const j = JSON.parse(r.out);
+  assert.equal(j.code, 3);
+  assert.match(j.error, /not reachable/);
+  const bad = await run(["spend", "--since", "nonsense", "--json"], { env: e.env });
+  assert.equal(bad.code, 2);
+  assert.equal(JSON.parse(bad.out).code, 2);
+});
