@@ -2,7 +2,7 @@
 /**
  * dsh-hub: CLI for dsh-model-hub. Every command accepts --json.
  *   status | accounts | gpus | switch <model> [--gpus 2,3] | unload | spend [--since] [--by]
- *   | prices <provider/model…> | cache [--session <id>] | doctor
+ *   | prices <provider/model…> | plans | cache [--session <id>] | doctor
  * Offline-capable: accounts, spend, prices (read the data dir). Needs DSH running: status, cache.
  * Talks to the configured GPU server (config.json) directly for gpus/switch/unload. Never prints secrets.
  */
@@ -29,7 +29,8 @@ const USAGE = `usage: dsh-hub <command> [--json]
                               load a model on the GPU server; --gpus pins it, --auto clears a pin, --force overrides the 300 s lease
   unload                      unload the GPU server's model now
   spend [--since today|7d|30d|all] [--by provider|model|session|day]
-  prices <provider/model…>    price rows (litellm / override / unpriced)
+  prices <provider/model…>    price rows (litellm / ollama / override / unpriced); ollama/<model> shows its rate, off-peak rate, source and date
+  plans                       prepaid plan credits (config.json plans): used this cycle, remaining, resets
   cache [--session <id>]      prompt-cache hit ratios
   doctor                      end-to-end health check (exit 1 on any failure)`;
 
@@ -140,8 +141,15 @@ export async function main(argv, io = {}) {
       }
       case "accounts": {
         const accounts = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) });
+        // identity (email, plan) comes from the running host (it holds the token); without it: "account not reported"
+        try {
+          const h = await hubGet("/accounts");
+          const ids = new Map((Array.isArray(h.body?.accounts) ? h.body.accounts : []).filter((x) => x?.identity).map((x) => [x.provider, x.identity]));
+          for (const x of accounts) if (ids.has(x.provider)) x.identity = ids.get(x.provider);
+        } catch { /* host not reachable */ }
+        const idText = (x) => { const i = x.identity; const parts = [i?.email ?? i?.name, i?.plan, i?.org].filter(Boolean); return parts.length ? parts.join(" · ") : "account not reported"; };
         const human = ({ accounts: a }) => a.map((x) =>
-          `${x.provider.padEnd(15)} ${x.health.padEnd(14)} ${x.signedIn ? `${x.kind} ${x.expiresAt ? fmtMs(x.expiresInMs) : ""}` : "not signed in"}${x.lastError ? `  err: ${x.lastError}` : ""}`).join("\n");
+          `${x.provider.padEnd(15)} ${x.health.padEnd(14)} ${x.signedIn ? `${x.kind} ${x.expiresAt ? fmtMs(x.expiresInMs) : ""}  ${idText(x)}` : "not signed in"}${x.lastError ? `  err: ${x.lastError}` : ""}`).join("\n");
         const broken = accounts.filter((x) => x.health === "refresh-failed").map((x) => x.provider);
         if (broken.length) return emitFailed({ accounts }, human, `refresh failed for ${broken.join(", ")}: sign in again`);
         emit({ accounts }, human);
@@ -188,6 +196,7 @@ export async function main(argv, io = {}) {
         const human = (r) => [
           `${r.since}: ${fmtUsd(r.totals.usd)} charged, ${fmtUsd(r.totals.apiEquivUsd)} API-equivalent, ${r.totals.calls} calls`,
           ...Object.entries(r.groups ?? {}).map(([k, v]) => `  ${k.padEnd(28)} ${fmtUsd(v.usd).padStart(9)}  api-eq ${fmtUsd(v.apiEquivUsd).padStart(9)}  ${v.calls} calls`),
+          ...(r.plans ?? []).map((p) => `plan ${p.provider}: ${p.name} ${fmtUsd(p.usedUsd)} of ${fmtUsd(p.includedUsd)} used, ${fmtUsd(p.remainingUsd)} left, resets ${p.resetsAt.slice(0, 10)}`),
           `caps: daily ${fmtUsd(r.caps.limits.dailyUsd)} session ${fmtUsd(r.caps.limits.sessionUsd)}  status ${r.caps.action} (${r.caps.reason})`,
         ].join("\n");
         if (rep.unreadable) return emitFailed(rep, human, "partial totals: the spend ledger could not be read (see dsh-hub doctor)");
@@ -208,10 +217,23 @@ export async function main(argv, io = {}) {
           try { oauthProviders = readAccounts({ statePath: join(dataDir, "accounts-state.json"), ...(credentialsPath ? { credentialsPath } : {}) }).filter((a) => a.signedIn && a.kind === "oauth" && !keyed.includes(a.provider)).map((a) => a.provider); } catch { /* none known: metered */ }
         }
         const rep = { ...(await createCostEngine({ dataDir, fetchImpl, localProviders: cfg.localProviders, oauthProviders }).prices(rest)), routeAuth: routeAuth ? "host" : "unknown" };
-        const human = (r) => [`table: ${r.source} (${r.count} entries)${r.routeAuth === "unknown" ? "; host not reachable, so subscription billing is not assumed" : ""}`, ...Object.entries(r.models).map(([k, p]) => p.error ? `${k}  ${p.error}` : `${k}  ${p.billing}/${p.source}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M`)].join("\n");
+        const declared = new Set(cfg.subscriptions ?? []);
+        const human = (r) => [`table: ${r.source} (${r.count} entries)${r.routeAuth === "unknown" ? "; host not reachable, so subscription billing is not assumed" : ""}`,
+          ...(r.ollama ? [`ollama table: ${r.ollama.source}, dated ${r.ollama.date ?? "?"}, ${r.ollama.count} models (${r.ollama.url})`] : []),
+          ...Object.entries(r.models).flatMap(([k, p]) => p.error ? [`${k}  ${p.error}`] : [
+            `${k}  ${p.billing}/${p.source}${declared.has(k.split("/")[0]) ? " (declared in config.json)" : ""}  in $${p.inPerM}/M  out $${p.outPerM}/M  cache-read $${p.cacheReadPerM}/M${p.offPeak ? "  [off-peak rate now]" : ""}`,
+            ...(p.ollama ? [`    ollama: ${p.ollama.peak ? `peak in $${p.ollama.peak.inPerM}/M out $${p.ollama.peak.outPerM}/M cache $${p.ollama.peak.cachedPerM}/M` : "no off-peak row"}${p.ollama.offPeakRate ? `; off-peak in $${p.ollama.offPeakRate.inPerM}/M out $${p.ollama.offPeakRate.outPerM}/M cache $${p.ollama.offPeakRate.cachedPerM}/M` : ""} (12:00-18:00 UTC weekdays is peak)`] : [])])].join("\n");
         const unpriced = Object.entries(rep.models).filter(([, p]) => !p.priced).map(([k]) => k);
         if (unpriced.length) return emitFailed(rep, human, `no known price for ${unpriced.join(", ")}`);
         emit(rep, human);
+        return 0;
+      }
+      case "plans": {
+        const engine = createCostEngine({ dataDir, localProviders: cfg.localProviders });
+        const plans = engine.plansReport();
+        const human = ({ plans: ps }) => (ps.length ? ps.map((p) => `${p.provider.padEnd(12)} ${p.name}  ${fmtUsd(p.usedUsd)} of ${fmtUsd(p.includedUsd)} used  remaining ${fmtUsd(p.remainingUsd)}${p.overageUsd > 0 ? `  overage ${fmtUsd(p.overageUsd)} (metered)` : ""}  cycle ${p.cycleStart.slice(0, 10)} -> resets ${p.resetsAt.slice(0, 10)}${p.complete ? "" : "  (partial: ledger unreadable)"}`).join("\n")
+          : "no plans configured (config.json plans: { \"ollama\": { \"name\": \"Pro\", \"includedUsd\": 60, \"resetsOnDay\": 9 } })");
+        emit({ plans }, human);
         return 0;
       }
       case "cache": {
@@ -292,6 +314,13 @@ async function doctor({ emit, fetchImpl, hubUrl, dataDir, credentialsPath, gpu, 
     if (caps.unreadable) add("caps", "fail", "the spend ledger could not be read: caps cannot be checked and metered requests are held back");
     else add("caps", caps.warnings.length || caps.complete === false ? "warn" : "ok", `daily $${caps.limits.dailyUsd}, session $${caps.limits.sessionUsd}, today $${caps.todayUsd.toFixed(2)}${caps.complete === false ? " (partial: ledger rotating)" : ""} (${caps.action})`);
     const p = await eng.prices(["google/gemini-3.8-flash"]);
+    const o = (await eng.prices(["ollama/glm-5.3-flash"])).ollama;
+    if (o) {
+      const ageD = o.fetchedAt ? Math.floor((Date.now() - o.fetchedAt) / 86400e3) : null;
+      add("ollama prices", o.source === "network" || o.source === "cache" ? "ok" : "warn", `${o.source}, dated ${o.date ?? "?"}${ageD !== null ? `, fetched ${ageD}d ago` : ", bundled snapshot (never refreshed)"}, ${o.count} models`);
+    }
+    if (cfg.subscriptions?.length) add("declared subscriptions", "ok", `${cfg.subscriptions.join(", ")} (declared in config.json)`);
+    for (const pl of eng.plansReport()) add(`plan ${pl.provider}`, pl.complete ? "ok" : "warn", `${pl.name}: ${fmtUsd(pl.usedUsd)} of ${fmtUsd(pl.includedUsd)}, resets ${pl.resetsAt.slice(0, 10)}`);
     add("price table", p.count > 0 ? "ok" : "fail", `${p.source}, ${p.count} entries${p.warnings.length ? `, ${p.warnings.length} warnings` : ""}`);
   } catch (e) { add("cost", "fail", redactSecrets(String(e?.message || e).slice(0, 120))); }
 

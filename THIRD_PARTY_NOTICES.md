@@ -4,7 +4,7 @@ dsh-model-hub is MIT-licensed (see `LICENSE`). It embeds the following third-par
 
 ## LobeHub Icons — provider marks in `lib/client.js`
 
-The provider SVG marks (Anthropic, OpenAI/Codex, GitHub Copilot, Kimi, OpenRouter, xAI, Google, DashScope,
+The provider SVG marks (Anthropic, OpenAI/Codex, GitHub Copilot, OpenRouter, xAI, Google, DashScope,
 Ollama, DeepSeek, NVIDIA — shown for a configured GPU server — and Apple — shown for the Mac route) are taken
 from `@lobehub/icons-static-svg` 1.102.0 (https://github.com/lobehub/lobe-icons), under the MIT License below.
 The marks themselves are trademarks of their respective owners and are used only to identify each provider.

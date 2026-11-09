@@ -50,12 +50,12 @@ Start `dsh web` (it serves on `http://127.0.0.1:3080` by default) and open **Set
   `@deepseek-ai/dsh` package. Without it the plugin still loads and costs, caps, cache
   checks and the GPU panel keep working; the account list and refresh watchdog, the Claude plan card and the
   request-image cap turn off (they use DSH's own `yaml`, `pi-ai` and `sharp`). The plugin then cannot see your
-  sign-ins either, so Claude, Codex, Copilot and Kimi calls are counted as **metered** (priced and capped) until
+  sign-ins either, so Claude, Codex and Copilot calls are counted as **metered** (priced and capped) until
   it can.
 
 ## What it adds
 
-- **Accounts** (Claude Pro/Max, Codex, GitHub Copilot, Kimi, OpenRouter, xAI): signed-in state, expiry, a watchdog
+- **Accounts** (Claude Pro/Max, Codex, GitHub Copilot, OpenRouter, xAI): signed-in state, expiry, a watchdog
   that refreshes grants ahead of expiry through DSH's own credential store, and **Sign in / Sign in again** buttons
   that drive DSH's native sign-in flow (see below).
 - **Costs and caps**: every model step is priced (LiteLLM's public price table plus your overrides) and appended to
@@ -99,7 +99,8 @@ Every command takes `--json`. Whenever a command exits non-zero, its JSON on std
 dsh-hub status                      host API health, plugin features, Claude plan
 dsh-hub accounts                    sign-in / expiry / watchdog state (exit 1 if a refresh failed)
 dsh-hub spend [--since today|7d|30d|all] [--by provider|model|session|day]
-dsh-hub prices <provider/model>...  price rows (litellm / override / unpriced)
+dsh-hub prices <provider/model>...  price rows (litellm / ollama / override / unpriced); ollama/<model> adds the peak and off-peak rates, source and date
+dsh-hub plans                       prepaid plan credits: used this cycle, remaining, cycle start, next reset
 dsh-hub cache [--session <id>]      prompt-cache hit ratios
 dsh-hub gpus                        GPU cards, owners, loaded model           (GPU server only)
 dsh-hub switch <model> [--gpus 2,3 | --auto] [--force]                        (GPU server only)
@@ -107,7 +108,7 @@ dsh-hub unload                      unload the GPU server's model now        (GP
 dsh-hub doctor                      end-to-end health check
 ```
 
-`accounts`, `spend` and `prices` read the data dir and work with DSH stopped; `status` and `cache` need the host API
+`accounts`, `spend`, `prices` and `plans` read the data dir and work with DSH stopped; `status` and `cache` need the host API
 (`DSH_HUB_URL`, default `http://127.0.0.1:8185`); the GPU commands talk to the configured GPU server and exit 2 with a
 hint when none is configured.
 
@@ -133,13 +134,15 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | Key | Meaning |
 |---|---|
 | `gpuServer` | the optional GPU server (see [GPU server](#gpu-server-optional)); `null` or absent = off |
-| `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. The providers with built-in pricing, `anthropic`, `dashscope`, `deepseek-account`, `deepseek-official`, `github-copilot`, `google`, `kimi-coding`, `ollama`, `ollama-cloud`, `openai-codex`, `openrouter` and `xai`, are never treated as local even if listed here |
+| `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. The providers with built-in pricing, `anthropic`, `dashscope`, `deepseek-account`, `deepseek-official`, `github-copilot`, `google`, `ollama`, `ollama-cloud`, `openai-codex`, `openrouter` and `xai`, are never treated as local even if listed here |
 | `hub.allowedOrigins` | extra exact origins allowed to call the host API (see [Security model](#security-model)) |
 | `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Costs panel, besides models you actually used |
+| `plans` | prepaid monthly credits per provider, e.g. `{"ollama": {"name": "Pro", "includedUsd": 60, "resetsOnDay": 9}}`. See [Plans](#plans-and-billing-kinds) |
+| `subscriptions` | provider ids declared as subscription-billed (`$0` charged, API value kept, never capped). The Costs panel and `dsh-hub prices` label them "declared in config.json" so a typo is visible. A provider also in `localProviders` stays local |
 | `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
 
 Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` (price overrides),
-`prices.litellm.json` (24 h price-table cache), `accounts-state.json`, `provider-health.json`.
+`prices.litellm.json` (24 h price-table cache), `ollama-prices.json` (refreshed Ollama Cloud rates), `accounts-state.json`, `provider-health.json`.
 
 | Environment variable | Effect |
 |---|---|
@@ -177,11 +180,15 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   (`spend-pending`) rather than checked against a ledger that is missing that step. Each DSH session, a subagent's
   included, has its own `sessionUsd` budget; the daily caps cover them all.
 - **Billing kind**: a provider counts as **subscription** ($0 charged, API-list equivalent still recorded) only while
-  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot, Kimi), its route in DSH does not name an
+  DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot), its route in DSH does not name an
   API key (`apiKeyEnv`; DSH sends that key instead of the sign-in), and the plugin can read both (re-checked every
   30 s; `GET /status` shows `routeAuth`). The same provider used with an API key, or while DSH's credential store or
   route config cannot be read, is **metered**: a failed read never reuses an earlier answer. `dsh-hub prices` asks the
   running host for the route config and, when the host is not reachable, does not assume subscription.
+  Two more kinds of evidence make a call a subscription: a route whose base URL is exactly `https://api.z.ai/api/coding/...`
+  (host compared after URL parsing; Z.ai Coding Plan keys only work there, so the call is covered even with an API key;
+  the API-equivalent value comes from the LiteLLM table when it knows the model), and a provider listed in config.json
+  `subscriptions`. Lookalikes (`api.z.ai.evil.example`, `evil.example/api.z.ai/api/coding/`) do not match.
   Every other API (Google, OpenRouter, DashScope, …) is metered; a model is **free** only if
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
@@ -265,6 +272,40 @@ first asks the hub which instance it belongs to and is sent only when that is po
 from another instance, or before the hub reports its owner, nothing is changed. Cost capture and caps still run in
 every instance.
 
+## Plans and billing kinds
+
+**Ollama Cloud** bills per token at the rates published on https://ollama.com/pricing (input, cached input, output; some
+models also have an "(Off-Peak)" row that applies outside 12:00-18:00 UTC on weekdays and all day on weekends; the
+call's own UTC timestamp decides). The plugin prices `ollama` / `ollama-cloud` calls from that table, never from
+LiteLLM (whose `ollama/*` rows describe local models). The table comes from a bundled snapshot (dated 2026-11-09) and a
+copy refreshed in the background from the pricing page at most once per 24 h (cached in `ollama-prices.json`, never
+blocking a request). The page is untrusted input: size-capped, parsed as numbers only, accepted only when at least 10
+models parse with finite non-negative rates; otherwise the previous copy (or the snapshot) stays and a warning is
+logged. `priceSource` is `ollama` (refreshed copy) or `ollama-snapshot` (bundled). A model not on the table is
+`unpriced`, never guessed; a rate shown as "-" stays unknown. Model ids are matched exactly, after dropping a trailing
+`:cloud` / `-cloud`, then by the part before `:` (`gemma4:31b-cloud` -> `gemma4`). A `prices.json` row still wins.
+
+A route is Ollama Cloud when the provider is `ollama` / `ollama-cloud` and the base URL's host is exactly `ollama.com`
+(or the model id ends in `:cloud` / `-cloud`, or the base URL is unknown). Ollama on a loopback/private base URL with a
+non-cloud model is **local** ($0). The built-in-pricing guard for `localProviders` typos stays for every other provider.
+
+**Plans.** With `plans.<provider>` set, a priced call is billed **credits** while that provider's API value this cycle
+(since the most recent `resetsOnDay` at 00:00 UTC, clamped to the month's last day) stays within `includedUsd`: charged
+$0, API value kept. A call that crosses the line is recorded **metered** with only the overage in `usd` (full value in
+`apiEquivUsd`); later calls are metered. Caps block only metered calls, so they count real overage only. A provider
+without a plan is plain pay-as-you-go. If the ledger cannot be read in full when a call is recorded, that call is left
+metered (never free by accident). `dsh-hub plans` and the Costs panel show used / remaining / next reset; the dock chip
+gets a ring per plan.
+
+| Billing kind | Charged (`usd`) | Capped | When |
+|---|---|---|---|
+| `metered` | the cost | yes | pay-as-you-go APIs; the part of a plan call beyond its credits |
+| `credits` | $0 (API value kept) | no | within a configured plan's included credits this cycle |
+| `subscription` | $0 (API value kept) | no | OAuth sign-in without an API key, Z.ai Coding Plan endpoint, or declared in `subscriptions` |
+| `free` | $0 | no | `prices.json` says `"billing": "free"` (DashScope free tier) |
+| `local` | $0 | no | `localProviders`, loopback/private base URL, Ollama non-cloud on loopback |
+| `mixed` | n/a | n/a | an aggregate bucket holding more than one kind |
+
 ## Known limitations
 
 - The Claude plan card (5-hour / weekly %) reads an **undocumented** Anthropic OAuth usage endpoint; it may change
@@ -272,8 +313,9 @@ every instance.
   (and `dsh-hub status`) also shows how many messages and model calls DSH itself sent in the 5-hour window, read from
   DSH's session logs (zstd-compressed: Node's built-in zstd, else the `zstd` program); when a log cannot be decoded
   that line is left out rather than shown as 0.
-- DSH does not expose a route's base URL to plugins, so self-hosted routes must be listed in `localProviders` to be
-  priced at $0 (loopback/private auto-detection is implemented but cannot be wired yet).
+- The plugin reads each route's base URL from DSH's loaded provider config (the same place it reads `apiKeyEnv`); when
+  that is not readable the base URL is unknown, an `ollama` call is then treated as Ollama Cloud, and self-hosted routes
+  should still be listed in `localProviders`.
 - One DSH instance per machine gets working Model hub panels (port 8185); see [Host API](#host-api).
 
 ## macOS launcher

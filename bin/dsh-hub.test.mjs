@@ -343,3 +343,37 @@ test("status shows DSH's own message and model-call counts when the host has the
   };
   assert.match((await run(["status"], { fetch: f })).out, /13 messages · 29 model calls sent from DSH/);
 });
+
+test("prices ollama/<model> shows the Ollama rate, off-peak rate, source and date; unknown model exits 1", async () => {
+  const offline = async () => { throw new Error("ECONNREFUSED"); };
+  const r = await run(["prices", "ollama/deepseek-v4.1-flash", "ollama/gemma4:31b-cloud"], { fetch: offline });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /ollama table: snapshot, dated 2026-11-09, 22 models/);
+  assert.match(r.out, /ollama\/deepseek-v4\.1-flash {2}metered\/ollama-snapshot/);
+  assert.match(r.out, /peak in \$0\.3\/M out \$1\.2\/M cache \$0\.006\/M; off-peak in \$0\.15\/M out \$0\.6\/M/);
+  assert.match(r.out, /ollama\/gemma4:31b-cloud {2}metered\/ollama-snapshot {2}in \$0\.14\/M/);
+  const u = await run(["prices", "ollama/no-such-model", "--json"], { fetch: offline });
+  assert.equal(u.code, 1);
+  assert.equal(JSON.parse(u.out).models["ollama/no-such-model"].priced, false);
+});
+
+test("plans prints used / remaining / cycle per configured plan, --json too; none configured says how", async () => {
+  const e = env();
+  const none = await run(["plans"], { e });
+  assert.equal(none.code, 0); assert.match(none.out, /no plans configured/);
+  mkdirSync(join(e.dir, "data"), { recursive: true });
+  writeFileSync(join(e.dir, "data", "config.json"), JSON.stringify({ plans: { ollama: { name: "Pro", includedUsd: 60, resetsOnDay: 9 } } }));
+  const r = await run(["plans"], { e });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /ollama\s+Pro {2}\$0\.0000 of \$60\.00 used {2}remaining \$60\.00 {2}cycle \d{4}-\d\d-\d\d -> resets \d{4}-\d\d-\d\d/);
+  const j = JSON.parse((await run(["plans", "--json"], { e })).out);
+  assert.equal(j.plans[0].provider, "ollama"); assert.equal(j.plans[0].includedUsd, 60); assert.equal(j.plans[0].remainingUsd, 60);
+});
+
+test("prices marks a provider declared as subscription in config.json", async () => {
+  const e = env();
+  mkdirSync(join(e.dir, "data"), { recursive: true });
+  writeFileSync(join(e.dir, "data", "config.json"), JSON.stringify({ subscriptions: ["acme"] }));
+  const r = await run(["prices", "acme/m1"], { e, fetch: async () => { throw new Error("x"); } });
+  assert.match(r.out, /acme\/m1 {2}subscription\/subscription \(declared in config\.json\)/);
+});
