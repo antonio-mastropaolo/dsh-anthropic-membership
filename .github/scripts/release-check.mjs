@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+const WORK_IN_PROGRESS = /still being merged|\bintegrator\b|\bwhen (?:they|it) lands?\b|\b(?:TODO|TBD|FIXME)\b/i;
 const TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 export function versionFromTag(tag) {
@@ -28,6 +29,9 @@ export function changelogSection(text, version) {
   if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n').trim();
   if (!body) throw new Error(`CHANGELOG.md section [${version}] is empty`);
+  // the body becomes the GitHub release notes verbatim: a hand-off note to whoever cuts the release must not ship
+  const note = WORK_IN_PROGRESS.exec(body);
+  if (note) throw new Error(`CHANGELOG.md section [${version}] still holds a work-in-progress note ("${note[0]}"): remove it before tagging`);
   return `${body}\n`;
 }
 

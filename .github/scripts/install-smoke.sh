@@ -202,19 +202,38 @@ web_up
 web_down
 # shellcheck disable=SC2174 # -m is meant for the deepest directory only; $DSH_HOME already exists
 mkdir -p -m 700 "$DSH_HOME/model-hub" && echo keep > "$DSH_HOME/model-hub/upgrade-marker"
-readme_has README.md <<'EOF'
-F="${DSH_HOME:-$HOME/.dsh}/profiles/web/cordis.patch.yml"
-sed -i.bak '/^- insert:$/{N;N;/@local\/dsh-model-hub/d;}' "$F"
-grep -q -e '^- ' -e '^\[\]$' "$F" || printf '[]\n' >> "$F"
-dsh plugin --profile web remove -w @local/dsh-model-hub
-dsh plugin --profile web add -w dsh-model-hub
-EOF
-upgrade_block() { # the README block, run in a v2 home; $1 = remove | skip-remove (a second run: pnpm rejects the remove)
-  F="${DSH_HOME:-$HOME/.dsh}/profiles/web/cordis.patch.yml"
-  sed -i.bak '/^- insert:$/{N;N;/@local\/dsh-model-hub/d;}' "$F"
-  grep -q -e '^- ' -e '^\[\]$' "$F" || printf '[]\n' >> "$F"
-  if [ "$1" = remove ]; then dsh plugin --profile web remove -w @local/dsh-model-hub; fi
-  dsh plugin --profile web add -w "$PLUGIN_SPEC"
+# The smoke runs the README's own upgrade blocks (the two sh blocks under its Upgrading heading), not a copy of them,
+# so the README cannot drift from what CI proves.
+upgrade_blocks() { # upgrade_blocks [1|2] : the lines of the first block (edit the patch file), the second (swap the package), or both
+  awk -v want="${1:-}" '/^### Upgrading from /{f=1;next} f&&/^## /{exit} f&&/^```sh$/{b=1;n++;next} f&&/^```$/{b=0;next} f&&b&&(want==""||want==n)' README.md
+}
+[ "$(upgrade_blocks 1 | wc -l)" -ge 3 ] || fail "README.md has no edit block under its Upgrading heading"
+upgrade_blocks 2 | grep -Fxq 'dsh plugin --profile web add -w dsh-model-hub' || fail "README.md's swap block no longer ends with the add command"
+upgrade_block() { # the README blocks, run in a v2 home; $1 = remove | skip-remove (a second run: pnpm rejects the remove)
+  local blocks out
+  blocks=$(upgrade_blocks)
+  if [ "$1" != remove ]; then blocks=$(printf '%s\n' "$blocks" | grep -v -e 'remove -w @local/dsh-model-hub'); fi
+  # shellcheck disable=SC2016 # the single quotes are meant: the literal text "$PLUGIN_SPEC" is expanded when the block runs
+  blocks=$(printf '%s\n' "$blocks" | sed 's|^dsh plugin --profile web add -w dsh-model-hub$|dsh plugin --profile web add -w "$PLUGIN_SPEC"|')
+  # shellcheck disable=SC2016
+  printf '%s\n' "$blocks" | grep -Fq 'add -w "$PLUGIN_SPEC"' || fail "could not point the README's add command at the packed tarball"
+  out=$(printf '%s\n' "$blocks" | PLUGIN_SPEC="$PLUGIN_SPEC" bash -e 2>&1) || { printf '%s\n' "$out"; fail "the README upgrade blocks failed"; }
+  printf '%s\n' "$out"
+  case "$out" in *"the v2 entry is still in"*) fail "the README's edit left the v2 entry in a canonical v2 patch file";; esac
+}
+shape_check() { # shape_check <name> <removed|kept> <content> : the README's edit block on one synthetic patch file (no dsh)
+  local home="$WORK/shape-$1" out f before
+  mkdir -p "$home/profiles/web" && f="$home/profiles/web/cordis.patch.yml"
+  printf '%s' "$3" > "$f" && before=$(cat "$f")
+  out=$(DSH_HOME="$home" HOME="$home" bash -c "$(upgrade_blocks 1)" 2>&1) || fail "shape $1: the edit block errored: $out"
+  if [ "$2" = kept ]; then
+    [ "$(cat "$f")" = "$before" ] || fail "shape $1: the file changed although the entry is not the plain block"
+    case "$out" in *"the v2 entry is still in"*) ;; *) fail "shape $1: no warning although the v2 entry is still there";; esac
+  else
+    ! grep -q '@local' "$f" || fail "shape $1: the v2 entry is still in the file"
+    case "$out" in *"still in"*) fail "shape $1: a warning although the entry was removed";; esac
+  fi
+  echo "shape $1: $2"
 }
 upgrade_asserts() {
   expect_rows "^  name: '@local/" 0 "upgrade, @local"
@@ -230,5 +249,37 @@ web_down
 step "README: the upgrade block run twice is harmless"
 upgrade_block skip-remove
 upgrade_asserts
+
+step "README: Upgrading from v2: patch files that are not the plain v2 entry (no dsh needed)"
+V2E="- insert:
+    - id: model-hub
+      name: '@local/dsh-model-hub'
+"
+OTH="- insert:
+    - id: other
+      name: other
+"
+shape_check plain removed "$V2E"
+shape_check between removed "$OTH$V2E$OTH"
+shape_check after-one-line-insert removed "- insert:
+    - id: a
+$V2E"
+shape_check several-rows kept "- insert:
+    - id: model-hub
+      name: '@local/dsh-model-hub'
+    - id: other
+      name: other
+"
+shape_check extra-key kept "- insert:
+    - id: model-hub
+      name: '@local/dsh-model-hub'
+      config:
+        x: 1
+"
+shape_check row-before kept "- insert:
+    - id: a
+    - id: model-hub
+      name: '@local/dsh-model-hub'
+"
 
 step "OK"

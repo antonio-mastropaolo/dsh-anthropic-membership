@@ -46,3 +46,12 @@ test('CLI: tag and notes print on success and exit 1 with a message on failure',
   assert.equal(bad.status, 1); assert.match(bad.stderr, /does not match/); assert.equal(bad.stdout, '');
   assert.equal(run('nonsense').status, 2);
 });
+
+test('changelogSection refuses a section that still carries a work-in-progress note (the body is published verbatim)', () => {
+  for (const note of ['Forecast is still being merged; it is added to this section when it lands.', 'Integrator: add the forecast bullets.', 'More bullets are added when they land.', 'TODO: forecast', 'TBD']) {
+    const cl = `# Changelog\n\n## [3.0.0] - 2026-11-20\n\n${note}\n\n### Added\n- first\n`;
+    assert.throws(() => changelogSection(cl, '3.0.0'), /work-in-progress note/, note);
+  }
+  const cl = `# Changelog\n\n## [3.0.0] - 2026-11-20\n\n### Added\n- first\n\n## [3.1.0] - Unreleased\n\nstill being merged\n`;
+  assert.equal(changelogSection(cl, '3.0.0'), '### Added\n- first\n', 'only the released version\'s own body is checked');
+});
