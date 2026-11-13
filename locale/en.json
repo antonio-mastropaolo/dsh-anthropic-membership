@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Model hub",
+    "description": "Provider sign-in, per-model cost ledger and spend caps, prompt-cache checks, an optional GPU-server panel and the dsh-hub CLI for DeepSeek Harness."
+  }
+}

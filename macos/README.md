@@ -10,6 +10,10 @@ started with an extra `--patch` file. Adapt `launcher` before using it:
 - `PATCH`: the launcher passes `--patch $HOME/.ollama/launch/dsh/ollama.cordis.yml` — remove that argument if you do
   not have such a file;
 - the bundle id in `Info.plist` (`local.amastro.dsh.v2`): use your own.
+- API keys for routes that read one from the environment (a route's `apiKeyEnv`): a Dock launch has none. Optionally
+  write `~/.config/dsh/launcher.conf` (or point `DSH_LAUNCH_CONF` at another file) with two lines,
+  `env-file=<a file of NAME=value lines>` and `names=<NAME> [<NAME> ...]`. The launcher exports only the listed names
+  from that file, never sources it, never prints a value, and refuses names such as `PATH`, `NODE_OPTIONS` or `DYLD_*`.
 
 Build:
 

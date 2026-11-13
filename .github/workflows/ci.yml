@@ -42,6 +42,9 @@ jobs:
           npm test 2>&1 | tee test.log
           grep -Eq '^(ℹ|#) fail 0$' test.log
           grep -Eq '^(ℹ|#) skipped 5$' test.log
+      - name: release scripts
+        if: hashFiles('.github/scripts/*.test.mjs') != ''
+        run: node --test .github/scripts/*.test.mjs
 
   with-dsh:
     name: with DSH (${{ matrix.os }})
@@ -54,6 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          fetch-depth: 0 # the smoke checks out the last v2 commit for the upgrade test
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
@@ -71,7 +75,7 @@ jobs:
           npm test 2>&1 | tee test.log
           grep -Eq '^(ℹ|#) fail 0$' test.log
           grep -Eq '^(ℹ|#) skipped 0$' test.log
-      # The README's Install steps, verbatim, in a throwaway DSH_HOME; then a live check of the host API; then
-      # the README's Uninstall steps.
-      - name: Install per README, run dsh web, check the hub, uninstall
+      # The README's Install steps with the packed tarball (what will be published), in a throwaway DSH_HOME; a live
+      # check of the host API; the README's Uninstall steps; then the README's v2 upgrade block.
+      - name: Install per README (packed tarball), run dsh web, uninstall, upgrade from v2
         run: bash .github/scripts/install-smoke.sh

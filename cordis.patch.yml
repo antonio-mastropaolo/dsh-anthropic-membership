@@ -1,4 +1,3 @@
-# Add to your DSH profile's cordis.patch.yml (e.g. ~/.dsh/profiles/web/cordis.patch.yml)
 - insert:
     - id: model-hub
-      name: '@local/dsh-model-hub'
+      name: dsh-model-hub
