@@ -77,31 +77,55 @@ Then start `dsh web`. Running both blocks twice is harmless apart from the `remo
 
 ## What it adds
 
-- **Accounts** (Claude Pro/Max, Codex, GitHub Copilot, OpenRouter, xAI): signed-in state, expiry, a watchdog
-  that refreshes grants ahead of expiry through DSH's own credential store, and **Sign in / Sign in again** buttons
-  that drive DSH's native sign-in flow (see below).
+- **Accounts** (Claude Pro/Max, Codex, GitHub Copilot, OpenRouter, xAI): one row per sign-in with its state and expiry, a
+  watchdog that refreshes grants ahead of expiry through DSH's own credential store, and **Sign in / Sign in again /
+  Reconnect** buttons that drive DSH's native sign-in flow, whose panel opens under the row (see below). Providers not
+  signed in yet are chips under **Add a sign-in**.
 - **Costs and caps**: every model step is priced (LiteLLM's public price table plus your overrides) and appended to
   a local ledger; requests to metered providers are stopped *before they are sent* once a daily, per-session or
-  per-provider cap is reached.
-- **Dock chip**: the usage chip in the composer dock is content-sized: it never claims the whole dock row, shrinks (clipped
-  inside its pill) when the dock is narrow, takes its own row below 640 px, and is absent when there is nothing to show. Hovering or keyboard-focusing the Claude
-  segment (Tab reaches it) shows a popover with exactly the plan card's lines: the account line (the Claude account's email, plan and
-  organization, read from Anthropic's profile endpoint in the background, so a poll never waits for it; until the first read lands, and for
-  5 minutes after a failed first read (then it retries), it says "account not reported"), the 5-hour, weekly,
-  per-model weekly (Opus, Sonnet) and labelled scoped weekly windows with % and reset time, the DSH message and model-call
-  counts when known, the caption, and the extra-usage sentence (which follows the plan card's *Stop Claude requests at 100% of a plan window* switch, see below). `Escape`
-  dismisses it. The popover is plain text rendered into the page body (never HTML); screen readers get the same lines
-  from a hidden description. The Claude segment has no native `title`, so two tooltips never stack; the other segments keep theirs.
-  When a forecast exists the popover carries the plan forecast lines too, and the Today segment's tooltip ends with the spend forecast line.
+  per-provider cap is reached. The **Costs** card in Settings shows today or the last 7 days: what was charged and the API value
+  that was not, each cap and plan credit as a runway, and tables by provider, outside DSH and purpose (see [Costs, caps and the
+  ledger](#costs-caps-and-the-ledger)).
+- **Claude plan card**: in Settings -> Models, inside the Anthropic provider row: ring gauges for the 5-hour window, the
+  weekly window and the per-model weekly windows, an `est.` line when a forecast exists, what DSH itself sent in the 5-hour window,
+  and the opt-in plan stop as a toggle switch (see "Stop at the plan limit" under [Costs, caps and the ledger](#costs-caps-and-the-ledger)).
+- **Dock chip**: the usage chip in the composer dock is ONE button of hairline-separated segments: `5h` (a mini ring of the
+  Claude 5-hour window and its percent), `Today` (DSH's charged spend today, with a mini ring against the daily cap; no ring when
+  there is no cap), one segment per plan with credits (the plan's name, a ring and the percent of its included credits used this
+  cycle) and `Cache` (the prompt-cache hit of the last step, text only). States: *warn* (amber) from 80% of the 5-hour window or a
+  plan's credits, and for Today once the cap's warning level is passed or when the ledger could not be read in full (the amount then
+  starts with `≥`); *over* (red, closed ring) at 100%, and `Cap reached` in place of the amount when the daily cap blocks;
+  `—` with an empty ring when the plan reports no 5-hour window; `Signed out`, `Sign-in expired` and `API key` (each with a small
+  mark, under the label `Claude`) replace the 5h figure while spend and cache still show; when the usage endpoint is unavailable
+  the 5h ring and percent keep the last reading in grey; `Cache` turns amber under 5% and shows `—` before any reading; a demo hub
+  puts a `DEMO` tag in front. The chip is content-sized (it never claims the whole dock row, shrinks clipped inside its border when
+  the dock is narrow), takes its own row below 640 px, and is absent when there is nothing to show. Hovering the chip or focusing it
+  with Tab opens its popover (fixed above the chip, at most 380 px wide), a compact plan card: a header with *Claude plan usage*,
+  the account line (the Claude account's email, plan and organization, read from Anthropic's profile endpoint in the background, so
+  a poll never waits for it; until the first read lands, and for 5 minutes after a failed first read (then it retries), it says
+  "account not reported") and the plan pill; two small rings (5-hour, weekly), each with its reset time, and `not started` under
+  the 5-hour ring when no window is open; one row per model window (Opus, Sonnet, a labelled scoped window) with a small ring, its
+  reset time and its percent; then rows tagged `est.` (only when a window is estimated to fill before its reset: the window, the
+  time and the range, and the rings of those windows get the dashed arc), `Stop` (the plan stop is on: the full-window sentence, or
+  `On: DSH refuses Claude requests in a full window.` when no window is full) or `Extra` (the plan stop is off: the extra-usage
+  sentence, see below) and `Usage` (usage unavailable); and last *Charged today* with the amount, `of $40.00` and the cap runway
+  (`· no daily cap` and no runway without a cap), with an `est.` row (`$1.20 an hour · reaches the cap around 4:40 PM`, or
+  `· the cap is not reached at this pace`) and a dashed stretch to the cap when the spend forecast has one. Signed out, expired and
+  API key show one sentence instead of the rings (the day's spend stays); *usage unavailable* shows the last rings and model percents
+  dimmed with `Unavailable (429) · last reading 12 min ago` on the `Usage` row; a demo hub puts the `DEMO` banner on top. `Escape`
+  dismisses it. The popover is plain text rendered into the page body (never HTML); screen readers get the chip's one-sentence
+  label and the plan lines from a hidden description. The button has no native `title`, so two tooltips never stack.
 - **Forecast**: an estimate of your charged spend per hour, today's projection and when each cap would be reached at
-  the current pace, and when each Claude plan window (5-hour, weekly) would hit 100 % at its recent pace: one line in the
-  Costs card, one line per window on the plan card and in the dock popover, a summary in `dsh-hub status`, the full
-  report in `dsh-hub forecast` and `GET /forecast`; always labelled an estimate, never a limit (see [Forecast](#forecast)).
-- **Turn cost line**: a quiet one-line cost under every finished turn of the conversation (money or billing kind, tokens,
-  cache share, route, first token, calls), `dsh-hub spend --session <id|last> --by turn` and `GET /spend/turns` for the same
-  numbers; turns recorded before ledger v2 show nothing (see [In the conversation](#in-the-conversation)).
+  the current pace, and when each Claude plan window (5-hour, weekly) would hit 100 % at its recent pace: one `est.` line and a dashed
+  ghost on the Today runway in the Costs card, a dashed arc on the plan card's rings for a window that fills before its reset with one
+  `est.` line, the same arcs and an `est.` row in the dock popover, a summary in `dsh-hub status`, the full report in
+  `dsh-hub forecast` and `GET /forecast`; always labelled an estimate, never a limit (see [Forecast](#forecast)).
+- **Turn cost line**: a quiet one-line cost under every finished turn of the conversation (what was charged, the billing kind,
+  route and calls), with a chevron that opens an inline detail card (tokens in and out, cache share, first token, the calls that
+  ran during the turn); `dsh-hub spend --session <id|last> --by turn` and `GET /spend/turns` give the same numbers; turns recorded
+  before ledger v2 show nothing (see [In the conversation](#in-the-conversation)).
 - **Session receipt and Cost tab**: one session's money on one page: charged, API value that was not charged, by model / route
-  (every line with its billing kind), by purpose, subagents (one level), billing kinds and caps; a **Cost** tab in the
+  (every line with its billing kind), by purpose, subagents (one level) and the spend caps; a **Cost** tab in the
   conversation with a **Copy as Markdown** button, `dsh-hub receipt <session-id|last> [--md|--json]` and
   `GET /spend/session?id=<id>` for the same numbers (see [Session receipt and the Cost tab](#session-receipt-and-the-cost-tab)).
 - **Slash commands**: `/cost`, `/caps`, `/route` and `/receipt` typed into the conversation: what this session and today cost,
@@ -110,8 +134,9 @@ Then start `dsh web`. Running both blocks twice is harmless apart from the `remo
   [Slash commands](#slash-commands)).
 - **Cache check**: prompt-cache hit ratio per session, with an alert when it collapses (e.g. the system prompt or
   the tool set changed mid-session).
-- **GPU server** (optional, off until configured): GPU cards with owners, load a model on chosen GPUs, unload,
-  return to automatic placement — for any server that implements [the small HTTP contract below](#what-a-gpu-server-must-implement).
+- **GPU server** (optional, off until configured): a ring of memory use per GPU (its owners in the tooltip), the server's models
+  with a Load, Switch or Unload button each, a **Load on GPU** control to pin the next load to chosen GPUs, and a way back to automatic
+  placement — for any server that implements [the small HTTP contract below](#what-a-gpu-server-must-implement).
 - **`dsh-hub` CLI** for all of the above, scriptable with `--json`.
 - **Request changes** (`imageCap` and `compactionSlim` are listed by `dsh-hub status` as feature flags): images over 2000 px are downscaled before
   a request is sent (`imageCap`, every provider, needs DSH's `sharp`); compaction requests are slimmed (long tool
@@ -125,11 +150,14 @@ DSH's own **Settings → Models → Add model provider**; the hub then prices an
 
 ## Sign in to Claude, Codex and the others
 
-1. Settings → Models → *Model hub* → **Accounts**.
-2. Click **Sign in** (or **Sign in again**). Some providers first ask how to sign in (for Claude: *Browser login* or
-   *Copy code*); pick one. The panel opens the provider's page, shows a device code or a paste box when the provider
-   asks for one, and can be cancelled. With *Browser login* the provider redirects back to DSH and the sign-in finishes
-   by itself.
+1. Settings → Models → *Model hub* → **Accounts**. Each signed-in provider is a row (account, state and expiry, one button);
+   the card header says `Auto-refresh on` (or `Auto-refresh: report only`) and has **Check now**, which runs the watchdog once.
+2. For a provider that is not signed in, click its chip under **Add a sign-in**; for a row, click **Sign in again** (expired,
+   expiring, revoked or refresh-failed) or **Reconnect** (healthy). The sign-in panel opens directly under that row. Some
+   providers first ask how to sign in (for Claude: *Browser login* or *Copy code*); pick one. The panel opens the provider's
+   page, shows a device code or a paste box when the provider asks for one, and can be cancelled (the row's button becomes
+   **Cancel**). With *Browser login* the provider redirects back to DSH and the sign-in finishes by itself. A failed attempt
+   says `Sign-in failed.`, that nothing was saved, and offers **Try again**.
 3. The grant is stored by DSH at `llm-pi-ai/<provider>` in `${DSH_HOME:-~/.dsh}/.credentials.yaml` and refreshed under
    DSH's cross-process lock. This plugin never writes credential records or DSH settings files.
 
@@ -208,9 +236,9 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | `gpuServer` | the optional GPU server (see [GPU server](#gpu-server-optional)); `null` or absent = off |
 | `localProviders` | DSH provider ids priced as local ($0, never capped); the GPU server's `id` is always included. The providers with built-in pricing, `anthropic`, `dashscope`, `deepseek-account`, `deepseek-official`, `github-copilot`, `google`, `ollama`, `ollama-cloud`, `openai-codex`, `openrouter` and `xai`, are never treated as local even if listed here |
 | `hub.allowedOrigins` | extra exact origins allowed to call the host API (see [Security model](#security-model)) |
-| `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Costs panel, besides models you actually used |
+| `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Prices card, besides models you actually used |
 | `plans` | prepaid monthly credits per provider, e.g. `{"ollama": {"name": "Pro", "includedUsd": 60, "resetsOnDay": 9}}`. See [Plans](#plans-and-billing-kinds) |
-| `subscriptions` | provider ids declared as subscription-billed (`$0` charged, API value kept, never capped). The Costs panel and `dsh-hub prices` label them "declared in config.json" so a typo is visible. A provider also in `localProviders` stays local |
+| `subscriptions` | provider ids declared as subscription-billed (`$0` charged, API value kept, never capped). The By provider table of the Costs card and the Prices card label them `Subscription · declared` (the tooltip says "Declared in config.json"), and `dsh-hub prices` says "declared in config.json", so a typo is visible. A provider also in `localProviders` stays local |
 | `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
 | `guard` | `{"onError": "allow" \| "block"}`, default `allow`: what the spend guard does when it fails itself (throws an internal error). `allow` lets the request through; `block` stops it as a spend-cap stop (code `SPEND_CAP`) whose message points at `guard.onError`. `block` also stops a request whose billing could not be determined because the failure happened before its price was known (that can be a local or subscription request); a request the guard had already classified as not metered is never stopped by it. Re-read on every request. Anything but exactly `"allow"` or `"block"` is ignored (`allow`) and reported by `dsh-hub doctor` |
 
@@ -267,12 +295,12 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   iterator without ever stopping it, or a stream that stalls after `usage`, does not lose the row: if no `finish`
   follows within one second of the `usage` chunk, the row is written then (finish and duration `null`) and the call's
   in-flight reservation is released. Rows written before ledger v2 have no `v` and stay readable by
-  every report; they count under the purpose `unknown` (the Costs panel calls it "Before ledger v2").
+  every report; they count under the purpose `unknown` (the Costs card calls it "Before ledger v2").
 - **Spend by purpose**: `dsh-hub spend --by purpose` groups the period by `purpose` (`chat`, `compaction`, `session-title`,
   `auto-review`, ..., `unknown` for rows before ledger v2); `GET /spend` accepts `by=purpose` and always returns
-  `byPurpose`. The Costs panel shows a "Spend by purpose" block under the plan rows for the selected period (Today /
-  7 days): one bar per purpose (Chat, Compaction, Title, Review, Before ledger v2; any other purpose by its own name),
-  largest API value first, each bar being that purpose's share of the period's API value, with its API value and call count.
+  `byPurpose`. The Costs card has a **By purpose** table for the selected period (Today / 7 days), one row per purpose (Chat,
+  Compaction, Title, Review, Before ledger v2; any other purpose by its own name), largest API value first, with its calls,
+  what was charged and its API value.
 - **Verify and export the ledger**: `dsh-hub ledger verify [--since today|7d|30d|all]` (default `all`) re-reads the raw
   ledger and, for every v2 row, works `apiEquivUsd` out again from the row's own tokens and stored `rates`, checks `usd`
   against it (`usd = apiEquivUsd - planCoveredUsd` for `metered` rows, `0` for `credits`, `subscription`, `free` and
@@ -311,18 +339,19 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   (`spend.*` or `.spend.*` in the data dir, in any letter case) or any existing path that is the same file as one (same
   device and inode, so a case variant on a case-insensitive filesystem or a hard link counts) is refused with exit 2, and so
   is any `--out` inside the data dir when `--force` is given: an export can never replace the ledger or pose as one. An export from an incomplete read
-  writes nothing (exit 1). The Costs panel has a "Ledger" line, "Ledger: not checked yet" until you press **Verify**
-  (a button, disabled while it runs); then "Ledger: N rows · verified · 0 mismatches" (the tooltip says how many older
-  rows cannot be re-derived and repeats the honesty note), "could not be read in full; run Verify again", or "N
-  mismatches, M torn lines · run dsh-hub ledger verify" with the first three mismatching fields listed under it.
+  writes nothing (exit 1). The Costs card ends with a **Spend ledger** footer: a status line, `Not checked yet. Every amount on this card comes
+  from it.`, until you press **Verify** (a button, disabled and reading `Verifying…` while it runs); then `N rows verified · 0
+  mismatches` (the tooltip says how many older rows cannot be re-derived and repeats the honesty note), `Could not be read in
+  full. Run Verify again.`, `Verify failed: <reason>`, or `N mismatches, M torn lines · run dsh-hub ledger verify` with the first
+  three mismatching fields listed under it.
 - **Guard errors**: if the spend guard itself throws (not a cap; an internal error), the request follows
   `guard.onError` (default `allow`: it goes through, as before; `block`: it is stopped with a message that names
   `guard.onError` and `dsh-hub doctor`, not `caps.json`). Every such exception is counted, and the newest one is kept
   with its time, redacted (secrets and URLs removed, at most 300 characters). The count and the last error
   are shown by `GET /status` (`guard`: `{onError, errors: {count, last: {at, message}}, reserved}`), `dsh-hub status` (a `guard` line, then the last error when the
   count is above 0), `dsh-hub doctor` (a `guard errors` check: `warn` when the count is above 0, which does not change
-  the exit code; skipped for a host that does not report `guard`), and the Costs panel (a "guard errors: N, last ..."
-  line, shown only once the count is above 0; its tooltip states the policy). The counters belong to the DSH process
+  the exit code; skipped for a host that does not report `guard`), and the Costs card (a `Guard` line, "guard errors: N, last ...", under the cap runways,
+  shown only once the count is above 0; its tooltip states the policy). The counters belong to the DSH process
   that owns the host port and reset when DSH restarts; `dsh-hub status` and `doctor` report that process.
 - **Caps** `caps.json`, defaults `{"dailyUsd":40,"sessionUsd":15,"perProviderDailyUsd":{},"warnPct":50,"stopAtPlanLimit":false}`; a cap of 0
   turns it off. `sessionUsd` counts a session's whole history, however old. Only **metered** calls are ever
@@ -340,14 +369,17 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   another writer (the host's `POST /caps`, or another `dsh-hub caps set`) changed it in between, so a concurrent edit is
   kept unless both writes land inside the instant between that re-read and the rename (then the last writer wins).
   If the old file was unparseable, it is kept as `caps.json.broken` and replaced.
-  The Costs card has an **Edit caps** form: number inputs for Daily cap, Session cap and Alert at (%), one row per
-  provider cap (Add provider cap / Remove), Save and Cancel. Enter saves, Escape cancels, mistakes show under the field
-  that caused them, and only the fields you changed are sent (when `caps.json` is invalid, every field is sent, so Save rewrites and repairs the file). It saves through `POST /caps`, so a page from another DSH
-  instance is refused (the card shows the reason). The card shows "Caps saved." afterwards.
+  The **Edit caps** button of the Costs card (in its "Caps and plan credits" section) opens the editor in place of that section:
+  number inputs for Daily cap, Session cap and Alert at (% of a cap), **Provider caps, per day** (one row per provider cap with
+  its id and dollars, Add provider cap / Remove), the plan-stop switch with the sentence under it (its change is saved by Save
+  like the rest), Cancel and Save. Enter saves, Escape cancels, mistakes show under the field that caused them, and only the
+  fields you changed are sent (when `caps.json` is invalid, every field is sent, so Save rewrites and repairs the file). It saves
+  through `POST /caps`, so a page from another DSH instance is refused (the editor shows the reason). The section shows "Caps
+  saved." next to the button afterwards. In demo mode the button is disabled.
   **A bad `caps.json`** (invalid JSON, not an object, unreadable, or a field that is not a number >= 0) is never
   silent: it shows as `caps.json invalid: <reason>; using defaults` in `GET /status` (`caps.problem`),
   `dsh-hub caps`, `dsh-hub status`, `dsh-hub doctor` (fail when the whole file is ignored, warn for a single bad
-  field) and a banner in the Costs card. The guard keeps using the defaults (`$40` / `$15`), never "no limit".
+  field) and a line in the warning box at the top of the Costs card. The guard keeps using the defaults (`$40` / `$15`), never "no limit".
   The per-request check reads running totals (today, the request's provider today, the session's whole history) that
   are kept up to date from the ledger's new rows only (the reader caches each file by inode and byte offset), not a
   fresh summary of the whole ledger; they equal a full recompute (`dsh-hub spend` shows the same numbers) and are
@@ -376,17 +408,24 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   - **Where it is stored:** `stopAtPlanLimit` (true or false) in the plugin's own `caps.json`, never in DSH's settings.
     It is re-read on every request, so switching it applies at once. Set it with `dsh-hub caps set stopAtPlanLimit=on`
     (or `off`; DSH can be stopped), with `POST /caps {"set": {"stopAtPlanLimit": true}}` (a JSON boolean; `1`, `"true"`
-    and the like are refused with 400), or with the switch on the Claude plan card in Settings -> Models. The switch
-    saves through `POST /caps`, so a page from another DSH instance is refused (the card shows the reason), and it is
-    disabled while saving.
-  - **What the plan card and the dock popover say** (one sentence under the windows, same text in both):
-    switch on and a window is full: `Stopped by DSH: your Claude <window> is at 100% (resets <time>). Claude requests are refused until then.`
-    (`Opus requests are refused until then.` / `Sonnet requests ...` for a per-model window); switch on, nothing full:
-    `DSH will stop Claude requests when a plan window (5-hour, weekly or per-model weekly) reaches 100%, so nothing is billed beyond your plan.`;
-    switch off and the usage endpoint reports extra usage on: `Extra usage is on for your Claude account: requests beyond a plan window are billed to your Anthropic balance.`;
-    off: `Extra usage is off for your Claude account: Anthropic refuses requests once a plan window is full.`;
-    not reported: `DSH does not stop Claude requests at the plan limit. Whether Anthropic bills or refuses requests beyond a full plan window depends on your account's extra-usage setting, which was not reported.`
-    The sentence appears only while the plan is live (not while the usage endpoint is unavailable, expired, API key or signed out).
+    and the like are refused with 400), with the toggle switch on the Claude plan card in Settings -> Models, or with the same
+    switch inside the Costs card's **Edit caps** editor (there it is saved with the other caps when you press Save). The plan card's
+    switch saves as soon as you flip it, through `POST /caps`, so a page from another DSH instance is refused (the card shows the
+    reason under the switch); it ignores clicks while a save is running and is disabled until the caps have loaded.
+  - **What the plan card and the dock popover say** (the plan card puts one sentence under the switch; the popover puts the same
+    sentence on its `Stop` or `Extra` row, except that with the switch on and no window full it says `On: DSH refuses Claude requests
+    in a full window.`). Switch on and a window is full: `Your <window> is full. DSH refuses Claude requests until it resets (<time>).`
+    (`<window>` is `5-hour window`, `weekly window`, `weekly Opus window` and so on; `Opus requests` / `Sonnet requests` for a
+    per-model window); switch on, nothing full: `DSH refuses Claude requests in a full window until it resets.`, with ` Extra usage
+    stays on for the account, but DSH will not draw on it.` added when the account has extra usage on; switch off and the usage
+    endpoint reports extra usage on: `Extra usage is on for this account: past a full window, requests bill to your Anthropic balance.`;
+    off: `Extra usage is off for this account: Anthropic refuses requests once a window is full.`;
+    not reported: `Whether Anthropic bills or refuses requests past a full window depends on your account's extra-usage setting, which was not reported.`
+    The sentence appears while the plan is live or shows its last reading (usage unavailable), not for expired, API key or signed
+    out; "a window is full" is judged only from a fresh plan reading. Screen readers get the longer forms of the same
+    sentences (`Stopped by DSH: your Claude <window> is at 100% (resets <time>). ...`, `Extra usage is on for your Claude
+    account: requests beyond a plan window are billed to your Anthropic balance.`, `DSH does not stop Claude requests at the plan
+    limit. ...`) in the chip's hidden description.
 - **In-flight reservations** (parallel requests cannot overshoot a cap together): a metered, priced request that passes
   the guard reserves its worst-case cost until its spend row is written. The request is first checked against the recorded
   spend exactly as before, so a lone request near a cap behaves as it always did. Only while OTHER requests are in flight
@@ -416,8 +455,8 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   reachable)` when the host does not answer; `--json` has `caps.reserved` as `{usd, count, source}` with `source` `host`,
   `unavailable` or `demo` (a demo folder never asks the host), and the exit code is not changed by it), by `GET /spend` (`caps.reserved`: `{usd, count}`), by `GET /status`
   (`guard.reserved`: `{usd, count, byProvider, stats: {reserved, released, expired, active}}`, where `reserved` always equals
-  `released + expired + active`), and by the Costs panel: the Daily cap meter reads "$3.00 of $40.00 · +$0.83 in flight" and a
-  line under the meters says "$0.83 reserved for 2 requests in flight (worst case)", both shown only while something is in flight.
+  `released + expired + active`), and by the Costs card: a `Held` line under the cap runways says "$0.83 for 2 requests in flight, counted at their worst
+  case.", shown only while something is in flight.
 - **Billing kind**: a provider counts as **subscription** ($0 charged, API-list equivalent still recorded) only while
   DSH holds an OAuth sign-in for it (Claude Pro/Max, ChatGPT/Codex, Copilot), its route in DSH does not name an
   API key (`apiKeyEnv`; DSH sends that key instead of the sign-in), and the plugin can read both (re-checked every
@@ -433,39 +472,44 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
   (`{"provider/model": {"inPerM": 1.25, "outPerM": 10, "cacheReadPerM": 0.125, "billing": "metered"}}`, `billing`
   optional) win, and edits to the file apply without a restart. A model with no known price
-  is `unpriced`, never guessed: its calls are stored at $0 and **do not count toward caps** — the Costs panel shows
-  "N unpriced calls" and the host logs the model once, so you can add it to `prices.json`. If a provider has a
+  is `unpriced`, never guessed: its calls are stored at $0 and **do not count toward caps** — the Costs card's warning box says
+  "N unpriced calls today — not counted toward caps (add prices.json)", the Prices card marks the model `Add price`, and the host logs the model once, so you can add it to `prices.json`. If a provider has a
   `perProviderDailyUsd` cap, its unpriced models are blocked instead (their spend could not be counted). While no
   price table could be loaded at all (first run offline, no cache), metered requests without a `prices.json` row are
-  held back (`prices-unavailable`) and the table is retried every minute.
+  held back (`prices-unavailable`) and the table is retried every minute. In Settings the **Prices** card (its own card, `$ per
+  million tokens`) lists each model as `provider / model` with its billing and In, Out and Cache prices; an unpriced model carries an
+  `Add price` pill, and a provider whose account has no credit a `No credit (402)` pill in place of its billing.
 
 ## In the conversation
 
 ### Turn cost line
 
-Under every **finished** turn of a conversation the plugin adds one muted line (a `conversation.chat.turnTail` entry; a turn
+Under every **finished** turn of a conversation the plugin adds one muted line, never wrapped (a `conversation.chat.turnTail` entry; a turn
 that is still running shows nothing until it closes). It is built from the ledger's v2 rows, which carry the turn number, so
 it never estimates and never guesses: a turn with no ledger rows (an older ledger, a v1 row, a call that failed before it was
-billed) shows **nothing** rather than a made-up number. The parts, joined by `·`:
+billed) shows **nothing** rather than a made-up number. The parts, joined by `·`, with a small swatch in front (solid: charged;
+tinted: not charged; hatched: plan credits; outline: local or free) and a chevron at the end:
 
-- **Money.** What was charged: `$0.0123` (two decimals from $0.10 up, four below). A turn with nothing charged shows its billing
-  kind instead of `$0.00`: `subscription`, `local`, `credits` or `free`; a turn that mixed kinds shows the money and each other
-  kind (`$0.40 + credits`). Metered calls on a model with no known price say `price unknown` (never `$0.00`).
-- **`API value $0.52, not charged`**: what the calls would have cost at list prices but were not charged (subscription, credits
-  that covered them, a free or local route); a call that crossed a plan's included credits contributes the part that was not charged.
-- **`12.4k in / 1.2k out`**: input is new tokens plus cache reads plus cache writes; **`cache 93%`**: cache reads over those input
-  tokens (left out when the turn had no input tokens).
-- **The route** (`provider/model`, or `2 routes`), **`first token 0.8 s`** (the first call's time to first token, left out when
-  unknown) and **`3 calls`**.
-- **Other calls made while the turn ran**, named separately: `+ compaction x1 (while this turn ran)`. The ledger gives these
-  calls (compaction, session title, review) no turn number, so they are attributed **by time**: a call of the same session whose
-  timestamp falls inside the turn's window (from the earliest call start to the last call end) is listed under that turn,
-  and the tooltip says so (`by time: these calls carry no turn number`). Their money is not added to the turn's money.
+- **`Charged $0.0066`** or **`Not charged`**. Money: two decimals from $0.25 up, four below (`$0.40`, `$0.1248`). `Price unknown`
+  stands in when every call had no known price (never `$0.00`).
+- **The billing kind**: `Metered`, `Subscription`, `Credits`, `Local` or `Free`; a turn that mixed kinds lists them
+  (`Metered + Credits`), and `price unknown` is added when some calls were unpriced.
+- **`API value $0.1248`**, only when nothing was charged: what the calls would have cost at list prices but were not charged
+  (subscription, credits that covered them, a free or local route).
+- **The route** (`provider / model`, or `2 routes`) and **`3 calls`**.
+- **`+ Compaction`**, **`+ Review`**: other calls made while the turn ran. The ledger gives these calls (compaction, session
+  title, review) no turn number, so they are attributed **by time**: a call of the same session whose timestamp falls inside the
+  turn's window (from the earliest call start to the last call end) is listed under that turn. Their money is not added to the turn's money.
 
-Hover the line or focus it with Tab to see a tooltip with the exact numbers (dollars to six places, token counts, time to first
-token and model time in ms, every route with its calls, every other-purpose call with its dollars); `Escape` closes it. Screen
-readers get the line as the element's label and the tooltip lines as its description. Everything is text (route names and ids
-from the ledger are never interpreted as markup) and the colours are DSH's own tokens, light and dark.
+The line is one button (the chevron says so); activating it, or Enter or Space with the keyboard, opens **the detail** inline under it, `Escape` closes it:
+
+- **In** `48,210 tokens · 71% read from cache`, then `13,981 new · 34,229 cache read · 0 cache write` (input is new tokens plus cache
+  reads plus cache writes); **Out** `1,134 tokens`; **Time** `First token after 0.9 s · model time 7.4 s` (each left out when unknown).
+- Only when calls ran during the turn, a table **While this turn ran** with one row per purpose (`Calls`, `Charged`, `API value`) and the note
+  `Not part of this turn's charge. Matched to it by time.`
+
+Screen readers get the line as the button's label. Everything is text (route names and ids from the ledger are never interpreted as
+markup) and the colours are DSH's own tokens, light and dark.
 
 The line polls `GET /spend/turns?session=<id>`: **one request every 5 seconds per visible conversation**, shared by all turn lines
 of that session, none while the browser tab is hidden, and the poll stops when the last line of the session goes away. A failed
@@ -502,7 +546,7 @@ A receipt is one session's money, read from the same ledger rows as the turn cos
   `credits` (covered by prepaid plan credits), `local` and `free` (no charge).
 - **Subagents (one level)**: rows whose `parentSessionId` is this session, rolled up with their own routes and purposes and a
   list of up to 50 subagent sessions (`and N more` beyond that). A subagent's own subagents are **not** rolled up (the receipt says
-  so). The headline numbers are the session's own rows; "charged including subagents" is shown next to them.
+  so). The headline numbers are the session's own rows; the text and Markdown receipt add a "charged including subagents" line next to them, and the tab shows the subagents in a block of their own.
 - **Not attributed**: rows written before ledger v2 carry no purpose and no turn. They are counted in every total and listed
   as `not attributed`; they are never put in a purpose.
 
@@ -520,13 +564,29 @@ still prints the body with `unreadable`); `2` bad usage (no id, extra arguments,
 is not `last` or 1-128 characters of `A-Za-z0-9_.:-`).
 
 **The Cost tab.** DSH's session header shows a **Cost** tab (a `conversation.view` entry, `id` `cost`, order 20: after Chat and
-the trajectory tab, before Stats). It shows money, billing kinds and caps only; there is no token table (DSH's own Stats tab shows
-tokens): four tiles (Charged, API value not charged, Turns and calls, Cache read), the first and last call, the by-route table
-with a billing pill on every line, the by-purpose table (`Not attributed (before ledger v2)` as its last row when there are
-older rows), the billing kinds, the subagent block, and a session cap and a daily cap meter when those caps are set (the session
-meter is this session's charged money against `sessionUsd`; the daily meter is today's charged money against `dailyUsd`; a cap of
-0 or off shows nothing). It polls `GET /spend/session?id=<id>` every 10 seconds while open. Everything is text; the colours are
-DSH's tokens, light and dark. In demo mode the tab starts with the DEMO banner. When the ledger could not be read in full and the session shows no calls, the tab says the calls are not known instead of `No model calls recorded for this session yet.`
+the trajectory tab, before Stats). It shows money and billing kinds only; there is no token table (DSH's own Stats tab shows
+tokens). From the top:
+
+- **Header**: `Session cost`, the session id, and one line of facts, for example `6 turns · 41 calls · cache read 71% · Nov 12,
+  7:26 PM – 7:31 PM` (local time; the turn count is left out for a session whose calls were recorded before ledger v2, which carry
+  no turn, rather than saying `0 turns`; the cache share when it is known), and the **Copy as Markdown** button.
+- **Headline**: **Charged** and **API value, not charged**, side by side, over one split bar: the charged money first (solid), then
+  the API value that was not charged, route by route (tinted, hatched for plan credits). When part was charged and part was not, a
+  line under the bar gives the API value in total.
+- **By route** (Billing, Calls, Charged, Not charged; one line per route and billing kind, with a swatch showing how it was paid)
+  and **By purpose** (Calls, Charged, API value; `Not attributed (before ledger v2)` as its last row when there are older rows).
+- Beside them, in a second column: **Spend caps** (a runway for this session's charged money against `sessionUsd` and for today's
+  against `dailyUsd`; a cap of 0 or off shows nothing), **API value per turn** (one bar per turn, the charged part solid, the last
+  60 turns, only for a session with at least two turns and some API value) and **Subagents (one level)** (sessions and calls,
+  what they charged and what was not charged; only when subagents ran).
+- A closing line: `From the local spend ledger. API value is the list price; plan, credit, free and local routes are not charged.`
+
+It polls `GET /spend/session?id=<id>` every 10 seconds while open, and the per-turn strip reads the turn line's shared
+`GET /spend/turns` poll. Everything is text; the colours are DSH's tokens, light and dark. States: before the first call the headline
+says `No model calls yet`; when the ledger could not be read in full a warning line says so, the amounts start with `≥`, and a session
+with no calls shows `Calls not known` and the warning `The spend ledger could not be read in full, so the calls of this session are not
+known.` instead of `No model calls yet`; while loading it says `Loading the session cost…`, and `Cost is unavailable: <reason>` when
+the host cannot answer; in demo mode the tab starts with the DEMO banner.
 
 **Copy as Markdown.** The button writes the Markdown that the host built (the very function `dsh-hub receipt --md` calls, so the
 tab and the terminal print the same string) to the clipboard, **only when you click it** (never on render or on a timer), and
@@ -542,15 +602,17 @@ checked), and that `navigator.clipboard.writeText` works on the DSH page (a loop
 
 ### Slash commands
 
-Four commands you type in the conversation, each answering with a short plain-text card (a few lines, no table). They take **no
-arguments**: any text after the name is ignored. They are read-only: they never change a cap, the ledger or a file.
+Four commands you type in the conversation, each answering with plain text: a few short lines, and for `/receipt` two tables aligned
+with spaces only (never Markdown). DSH shows the reply collapsed in one row (newlines become spaces), so the first line always reads
+as a phrase. They take **no arguments**: any text after the name is ignored. They are read-only: they never change a cap, the
+ledger or a file.
 
 | Command | What it prints |
 |---|---|
-| `/cost` | `Today: $1.23 charged. Daily cap $25.00, $23.77 left.` (`Daily cap: off.` when the cap is 0); `This session: $0.4100 charged, API value $2.69 not charged, 14 calls.` (`no model calls recorded yet.`; `not known.` when DSH gave no session id; `not known (the ledger could not be read in full).` when the ledger could not be read and the session shows no calls); `Session cap $15.00, $14.59 left.` (`Session cap: off.`); `Guard: ok. On a guard error: allow. In flight: $0.00.` The session is the one that received the command (`agent.id`), read with the same function as the receipt; the `Guard:` word and the `Why:` line are judged for that same session (its own charged spend against the daily, per-provider and per-session caps, by the same `checkCaps` the spend guard uses), not for the session the host saw last, so two open conversations never show each other's guard; with no session id the session cap is not applied. A line `Why: ...` follows when the guard is at `warn` or `block`, and `Ledger read was partial: totals may be low.` when the ledger could not be read in full. Money uses the CLI's rule: two decimals from $1, four below. |
-| `/caps` | `Caps in effect: daily $25.00, per session $15.00, warn at 50%.` (`off` for a cap of 0); one `Per provider <id>: $5.00 (spent today $1.20).` line per provider cap (`Per provider: none.`); `Today: ok. Stop at plan limit: off.` (the word covers the daily and per-provider caps, which are the same for every session; the per-session cap is in `/cost`); `A problem with caps.json: ...` when the file is invalid; and `Read-only here. Change caps in Settings > Models > Model hub or with: dsh-hub caps set dailyUsd=10`. Nothing typed after `/caps` is read, so no limit can be raised from a chat line. |
-| `/route` | `Route: google/gemini-3.8-flash.` (the provider and model DSH reports for the session, `agent.model.current()`); `Billing: metered (charged per use).` (`subscription`, `credits`, `local` and `free` are spelled out the same way); `Price per 1M tokens: $0.75 in, $3.75 out, $0.075 cache read.` and `Price source: litellm.` for a priced metered route (`Price: not known (unpriced).` otherwise; no price line for the other kinds); and `Auth: API key.`, `Auth: stored sign-in (grant).`, `Auth: none needed or none found.` or `Auth: not known (route config unreadable).`. When DSH has not reported a model: `Route: not known (DSH has not reported this session's model yet).` It never prints a key, a token, a URL or an environment variable name: the auth line is one of those four sentences. |
-| `/receipt` | the session receipt exactly as `dsh-hub receipt <id>` prints it (charged, API value not charged, by route, by purpose, subagents), or `No model calls recorded for this session yet.` (`The spend ledger could not be read in full, so the calls of this session are not known.` instead when the ledger could not be read and the session shows no calls); `This session: not known.` without a session id. |
+| `/cost` | `This session    $0.0141 charged of $15.00 · $14.99 left · $0.1265 not charged · 6 calls.` and `Today             $9.31 charged of $40.00 · $30.69 left · within caps.` (`near the cap` or `cap reached` in place of `within caps` when the daily or a provider cap is at `warn` or `block`; labels padded, amounts right-aligned), then `Held for requests in flight: $0.00. If the cap check itself fails, requests go through.` (`are refused` when the spend guard is set to block on its own errors) and `Not charged is the API value: the list price of calls on plan, credit, free and local routes.` A cap that is off reads `no session cap` / `no daily cap`; the session row says `no model calls recorded yet.`, `not known.` (DSH gave no session id) or `not known (the ledger could not be read in full).`. When the guard is at `warn` or `block` the first two lines are the verdict (`Near the daily cap: requests still go through.`, `Daily cap reached: metered requests are stopped.`, the same for the session and a provider cap) and `Why: ...`. The session is the one that received the command (`agent.id`), read with the same function as the receipt; the verdict and the `Why:` line are judged for that same session (its own charged spend against the daily, per-provider and per-session caps, by the same `checkCaps` the spend guard uses), not for the session the host saw last, so two open conversations never show each other's guard; with no session id the session cap is not applied. `Ledger read was partial: totals may be low.` follows when the ledger could not be read in full. Money uses the CLI's rule: two decimals from $1, four below. |
+| `/caps` | `Caps: $40.00 a day · $15.00 a session · warning at 50% · no provider caps · today within caps.` (`no daily cap`, `no session cap`, `no warning level` for a cap of 0; `provider caps below` and one aligned row per provider cap, `google   $5.00 a day · $1.20 spent today`); `Claude plan stop is off: DSH keeps sending Claude requests when a plan window is full.` (`is on: DSH refuses Claude requests ...`); `A problem with caps.json: ...` when the file is invalid; and `Read-only here. Change caps in Settings > Models > Model hub, or run: dsh-hub caps set dailyUsd=10`. The verdict and `Why:` lines of `/cost` come first when the daily or a provider cap is at `warn` or `block` (these caps are the same for every session; the per-session cap is in `/cost`). Nothing typed after `/caps` is read, so no limit can be raised from a chat line. |
+| `/route` | One line: `deepseek/deepseek-v4.1-flash · Metered: charged per use · Signed in with an API key.` (the provider and model DSH reports for the session, `agent.model.current()`; `Subscription: covered by your plan`, `Credits: covered by prepaid credits`, `Local: runs on your machine, no charge` and `Free: no charge` read the same way; the sign-in phrase is one of `Signed in with an API key`, `Signed in with a stored sign-in`, `No sign-in needed or found`, `Sign-in not known (route config unreadable)`), and for a priced metered route `Price per 1M tokens: $0.30 in · $1.20 out · $0.03 cache read · source: litellm.` (`Price: not known (unpriced).` for an unpriced one, `Price: not known.` when the host has no price row for the route; no price line for the other kinds). When DSH has not reported a model: `Route: not known (DSH has not reported this session's model yet).` It never prints a key, a token, a URL or an environment variable name. |
+| `/receipt` | `$0.0141 charged · $0.1265 API value not charged · 6 calls · 2 turns · cache read 38%.`, the span in local time and the session id (`Nov 12, 7:26 PM to 7:31 PM · session-...`), a `By route` table (billing, calls, charged, not charged) and a `By purpose` table (calls, charged, API value), one `Subagents (one level)` line when subagents ran, one `Not attributed (rows from before ledger v2)` line when older rows exist, or `No model calls recorded for this session yet.` (`The spend ledger could not be read in full, so the calls of this session are not known.` instead when the ledger could not be read and the session shows no calls); `This session: not known.` without a session id. This is the conversation's reply only: `dsh-hub receipt <id>` still prints the receipt text documented under [Session receipt and the Cost tab](#session-receipt-and-the-cost-tab). |
 
 Every line is at most 100 characters. The text is built from money, ids, model names and counts only; the data dir and file paths
 are never in a reply (a test checks all four replies for the data dir path). In [demo mode](#show-it-in-dsh) the host registers the
@@ -584,24 +646,29 @@ its line breaks.
 Estimates of how fast you are spending and when a cap or prepaid plan credit would be used up **if the current pace
 continues**. They are not limits: a forecast never blocks a request and never changes an exit code (the caps and the
 plan stop read only the ledger and, for the plan stop, the live usage gauge; no guard module imports the forecast).
-Where: the **Costs card** (one line under the cap meters), `dsh-hub forecast`, and `GET /forecast`.
+Where: the **Costs card** (an `est.` line under the cap runways, and a dashed ghost on the Today runway), `dsh-hub forecast`, and
+`GET /forecast`.
 
-The Costs card line, for example `$1.20/h now (15 min) · today ~$14.20 · daily cap ~16:40`:
+The Costs card's `est.` line is one sentence, for example `$1.20 an hour now, about $14.20 by midnight, under the daily cap.` or
+`$1.20 an hour now: daily cap reached around 4:40 PM (range 3:10–10:05 PM).`:
 
-- `$1.20/h now (15 min)`: what you are being **charged** per hour, from metered calls only (subscription, credits and
-  local calls add no dollars).
-- `today ~$14.20`: today's charged spend so far plus that hourly pace until the next local midnight.
-- the cap part first names every cap that is already reached (`session cap reached`, `openai cap reached`,
-  `daily cap reached`: a fact the guard is acting on, not a forecast), then the first cap that would be reached at this
-  pace (`daily cap ~16:40`, `openai cap ~15:10`, `session cap ~Fri 09:30`; a time on another day carries the weekday),
-  or else `daily cap: not at this pace` (it would not be reached before it resets). With no cap on, or a cap that lacks
-  its 3 calls, there is no cap part.
+- `$1.20 an hour now`: what you are being **charged** per hour over the last 15 minutes, from metered calls only (subscription,
+  credits and local calls add no dollars).
+- with no cap reached or about to be: `about $14.20 by midnight`, today's charged spend so far plus that hourly pace until the next
+  local midnight, then `, under the daily cap` when the daily cap would not be reached before it resets.
+- otherwise a colon and the cap part: it first names every cap that is already reached (`session cap reached`, `openai cap
+  reached`, `daily cap reached`: a fact the guard is acting on, not a forecast), then the first cap that would be reached at this
+  pace (`daily cap reached around 4:40 PM (range 3:10–10:05 PM)`, `openai cap reached around 3:10 PM`; a time on another day
+  carries the weekday), joined by `;`. A cap that lacks its 3 calls has no part.
+- The **Today runway** in the cap rows above the line shows the forecast as a dashed ghost from the spend dot to where today's
+  projection ends (to the cap, when the daily cap is reached at this pace); the `est.` line explains it. The Latest session, provider
+  and plan-credit rows have no ghost.
 
 The line carries a tooltip that starts `Estimate, not a limit.` and lists its inputs (the call count, both rates, the
 range for each cap), and a visually hidden `(estimate)` after it for screen readers. When the pace is suppressed
 (below), the forecast cannot be loaded, **the last poll of `/forecast` failed** or the report is **more than 60 seconds
-old**, the card shows **nothing**: no placeholder numbers and no estimate left over from an earlier poll. The plan card
-and the dock follow the same rule.
+old**, the card shows **nothing**: no `est.` line, no ghost, no placeholder numbers and no estimate left over from an earlier
+poll. The plan card and the dock follow the same rule.
 
 **Method.** The ledger is read for the last 2, 5, 9, 15, 30 and 60 minutes and differenced into six slices (0-2, 2-5,
 5-9, 9-15, 15-30 and 30-60 minutes ago). For a window W of 15 or 60 minutes the rate is the average of the slice rates
@@ -629,22 +696,32 @@ between the 15- and the 60-minute rate (it is the spread of two paces, not a con
   numbers as `dsh-hub plans`) against the pace of that provider's API value, until the next reset: `runs-out`,
   `not-before-reset`, `exhausted` or `suppressed`.
 
-**Claude plan windows.** The plan card's 5-hour and weekly windows get one more line each, directly under that window's
-line on the plan card, in the dock popover (the same lines: both come from one function) and in the hidden description
-of the dock chip:
+**Claude plan windows.** The estimate for the 5-hour and weekly windows appears in three places, only for a live plan (not while
+usage is unavailable, expired, API key or signed out) and only while the report is fresh (the same 60-second rule):
 
-- `At this pace: limit ~2:20 PM (range 2:05 PM–2:50 PM), 6 readings, before the reset`: the time the window would hit
-  100 %. The range's late end can be open: `(range from 2:05 PM)` (the pace could be lower than the readings can
-  resolve, so the limit might never come).
-- `At this pace: won't reach 100% before the reset at 5:00 PM`: the fit says 100 % comes after the window resets.
-- `At this pace: probably not before the reset at 5:00 PM (could be ~1:50 PM at the fastest pace)`: as above, but the
-  fastest pace inside the range would get there first, so the line hedges instead of promising.
-- Nothing is shown (no placeholder) when there are too few readings, the newest reading is stale, the window has reset or is
-  already at 100 %, or when the report was fitted to another reset than the window shown.
+- On the **plan card**, a ring whose window the forecast says reaches 100 % before its reset gets a dashed `est.` arc between its
+  used arc and the top, with a small `est.` tag; a ring whose window is not forecast to fill stays plain. One `est.` line under the
+  rings says it in words, one sentence per window:
+  - `5-hour fills around 4:10 PM (range 3:55–4:30 PM), before its reset.` (`Weekly` for the weekly window). The range's late end
+    can be open: `(range from 2:05 PM)` (the pace could be lower than the readings can resolve, so the limit might never come). When
+    the report has no times, `Weekly may fill before its reset.`
+  - `5-hour stays under 100% until its reset.`: the fit says 100 % comes after the window resets. `probably stays` when the fastest
+    pace inside the range would get there first, so the line hedges instead of promising.
+  - `At this pace neither window fills before its reset.` (or `At this pace the weekly window does not fill before its reset.` when
+    only one window has a fit) when no window fills and none hedges.
+  - `Not enough readings yet` when every reported window has too few readings.
+  - Nothing is shown (no `est.` line, no placeholder) when the newest reading is stale, the window has reset or is already at
+    100 %, or when the report was fitted to another reset than the window shown. The plan card's `est.` line has no tooltip; the
+    Costs card's does.
+- In the **dock popover**, the same dashed arcs on its two rings and an `est.` row for the windows that fill (the window, the
+  time and, on its own line, the range).
+- For screen readers, the chip's hidden description keeps one `At this pace:` line per window under its window line, each followed
+  by `(estimate)`: `At this pace: limit ~2:20 PM (range 2:05 PM–2:50 PM), 6 readings, before the reset`, `At this pace: won't reach
+  100% before the reset at 5:00 PM`, or `At this pace: probably not before the reset at 5:00 PM (could be ~1:50 PM at the fastest
+  pace)`.
 
-Each line is marked `~`/`At this pace`, carries a tooltip on the plan card that starts `Estimate, not a limit.` (the
-readings are whole percents, the newest reading's age, and that the % counts every Claude app on the account, so usage
-outside DSH moves it too), and a visually hidden `(estimate)`. The plan caption `Usage % counts every Claude app...` stays.
+On the plan card, the caption `Usage % counts every Claude app...` is now the `Rings` line, `Every Claude app on this account.`, and the
+same words stay in the hidden description.
 
 *History.* Each time the plan usage endpoint is fetched (the same call the plan card already makes; a cached or
 backed-off read is not a reading) the plugin appends one row per window (`fiveHour`, `sevenDay`) to
@@ -683,9 +760,9 @@ nobody is looking. A reading is taken only when something asks for the plan: the
 card and the composer dock each poll `/status` every 4 seconds while they are on screen (`lib/client.js`, `useStatus`),
 the host serves the plan from a 60-second cache (`USAGE_CACHE_MS` in `lib/plan-usage.mjs`), so that is at most one real
 fetch per minute, and with *Stop at the plan limit* on, every Claude subscription request asks too. An idle hub (DSH
-closed, or open with none of those showing) therefore adds no readings: after the last one, `dsh-hub forecast` and the
-cards show `not enough readings` until three readings span 5 minutes, and `no forecast: last reading … ago` once the newest is older
-than 20 minutes, until the next poll. Readings are written by whichever DSH process fetched the usage. Per-model weekly windows are not forecast.
+closed, or open with none of those showing) therefore adds no readings: after the last one, `dsh-hub forecast` says
+`not enough readings` (the plan card's `est.` line says `Not enough readings yet`) until three readings span 5 minutes, and
+`no forecast: last reading … ago` (the plan card shows no `est.` line) once the newest is older than 20 minutes, until the next poll. Readings are written by whichever DSH process fetched the usage. Per-model weekly windows are not forecast.
 
 **Minimum of 3 calls.** A forecast needs **at least 3 metered calls in the last 15 minutes behind it, per target**: the
 overall pace, each per-provider cap, the session cap and each plan are counted separately. Below that the target is
@@ -718,8 +795,8 @@ described above, and a data dir with no plan readings prints `claude plan    no 
 plan card is read)`. It reads the data dir (ledger, `caps.json`, `config.json`, `plan-history.jsonl`) and works with DSH
 stopped; exit 0, except 1 for a partial ledger, 2 for extra arguments.
 
-`dsh-hub status` adds `forecast` lines under the plan lines, using the same wording as the Costs card and `limit`
-times only: `forecast   $1.20/h now (15 min) · today ~$14.20 · daily cap ~16:40` and `forecast   claude 5h: limit ~14:20, 6
+`dsh-hub status` adds `forecast` lines under the plan lines, in the same compact wording as `dsh-hub forecast` (the
+Costs card says the same estimate as a sentence) and `limit` times only: `forecast   $1.20/h now (15 min) · today ~$14.20 · daily cap ~16:40` and `forecast   claude 5h: limit ~14:20, 6
 readings` (`claude weekly: won't reach 100% before the reset`). They come from the host's `GET /forecast`, else are computed
 from the data dir; a suppressed pace or a window without a forecast prints no line, and `status --json` then has no
 `forecast` key (otherwise `forecast` is the whole report).
@@ -832,8 +909,8 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 
 **Port 8185 is fixed** (the browser half of the plugin cannot discover another). If a second DSH instance starts,
 its host logs that the port is in use and serves nothing; that instance's UI then reaches the *first* instance's hub.
-Its origin is normally not on the first one's allowlist, so its panels say "not reachable"; if you did allowlist it,
-the panels show a notice that the data belongs to the other instance. Every change (sign-in, GPU switch, refresh)
+Its origin is normally not on the first one's allowlist, so the section says "Hub not reachable"; if you did allowlist it,
+the section shows a notice at its top (and the dock a pill, `other DSH's hub`) that the data belongs to the other instance. Every change (sign-in, GPU switch, refresh)
 first asks the hub which instance it belongs to and is sent only when that is positively this page's instance, so
 from another instance, or before the hub reports its owner, nothing is changed. Cost capture and caps still run in
 every instance.
@@ -860,8 +937,9 @@ non-cloud model is **local** ($0). The built-in-pricing guard for `localProvider
 $0, API value kept. A call that crosses the line is recorded **metered** with only the overage in `usd` (full value in
 `apiEquivUsd`); later calls are metered. Caps block only metered calls, so they count real overage only. A provider
 without a plan is plain pay-as-you-go. If the ledger cannot be read in full when a call is recorded, that call is left
-metered (never free by accident). `dsh-hub plans` and the Costs panel show used / remaining / next reset; the dock chip
-gets a ring per plan.
+metered (never free by accident). `dsh-hub plans` shows used / remaining / next reset; the Costs card has a runway per plan
+(`<Provider> <plan> credits`, its reset date, `$X of $60`, and a note when the plan is over its included credits and the overage is
+billed as metered); the dock chip gets a ring per plan.
 
 | Billing kind | Charged (`usd`) | Capped | When |
 |---|---|---|---|
@@ -941,8 +1019,8 @@ written to the demo folder, the watchdog and sign-in are off, and every state-ch
 switch/unload and the accounts "Check now" answers `409` (`POST /caps` included: in demo mode the Costs card's
 **Edit caps** button is disabled and the plan card has no stop switch; `GET /caps` shows the demo folder's caps, and
 `dsh-hub caps set` on a demo folder exits 2 without writing). `GET /status` reports `"demo": true`; `dsh-hub doctor` reports
-it as a warning; every hub card, the Claude plan card and the composer chip's plan popover show
-`DEMO DATA: synthetic, nothing is recorded or capped`, and the chip has a visible `DEMO` segment.
+it as a warning; the Model hub section shows `DEMO DATA: synthetic, nothing is recorded or capped` once, at its top (not on each
+card), and so do the Claude plan card, the Cost tab and the composer chip's popover; the chip has a visible `DEMO` tag.
 
 **Demo mode disables caps. Never leave `DSH_HUB_DEMO` set in the environment you use for real work.** It is
 honoured only when it names an absolute path to a sealed demo folder that is not your data dir; otherwise the host logs
@@ -952,14 +1030,15 @@ anything but its own environment at start-up.
 ## Known limitations
 
 - The Claude plan card (5-hour / weekly %) reads an **undocumented** Anthropic OAuth usage endpoint; it may change
-  or stop working without notice, in which case the card shows "unavailable" and nothing else is affected. The card
-  (and `dsh-hub status`) also shows how many messages and model calls DSH itself sent in the 5-hour window, read from
-  DSH's session logs (zstd-compressed: Node's built-in zstd, else the `zstd` program); when a log cannot be decoded
+  or stop working without notice, in which case the card greys the last reading and says `Plan usage unavailable (429). Last
+  reading N min ago.` and nothing else is affected. The card's `DSH` line (and `dsh-hub status`) also shows how many messages
+  and model calls DSH itself sent in the 5-hour window, read from DSH's session logs (zstd-compressed: Node's built-in zstd, else the `zstd` program); when a log cannot be decoded
   that line is left out rather than shown as 0.
 - `GET /status` `plan` also carries `scopedWeekly`, `sevenDayOpus`, `sevenDaySonnet` and `extraKnown` (whether the
   usage endpoint reported `extra_usage.is_enabled` as a boolean). The card and the dock popover state the extra-usage
-  setting only when `extraKnown` is true (on: "billed to your Anthropic balance"; off: "Anthropic refuses requests once a
-  plan window is full"); otherwise, with the stop switch off, they say the setting was not reported. Nothing is said while the plan is unavailable. `dsh-hub status` prints
+  setting only when `extraKnown` is true (on: "bill to your Anthropic balance"; off: "Anthropic refuses requests once a
+  window is full"); otherwise, with the stop switch off, they say the setting was not reported. Nothing is said while the plan is
+  expired, on an API key or signed out. `dsh-hub status` prints
   one `window` line per window reported (`5h`, `weekly`, `weekly opus`, `weekly sonnet`, a scoped label) and an
   `extra usage on|off|not reported` line. The per-model weekly windows are read from `seven_day_opus` / `seven_day_sonnet`,
   which are `null` in the recorded live sample; their non-null shape is assumed to equal `seven_day` and has not been seen.
