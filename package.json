@@ -1,18 +1,41 @@
 {
-  "name": "@local/dsh-model-hub",
-  "version": "2.0.0",
-  "description": "DeepSeek Harness plugin: model hub. DSH-native provider sign-in, optional GPU-server dispatch, per-model cost, spend caps, prompt-cache checks, and the dsh-hub CLI.",
+  "name": "dsh-model-hub",
+  "version": "3.0.0",
+  "description": "Model hub for DeepSeek Harness: provider sign-in, per-model cost ledger and spend caps, prompt-cache checks, an optional GPU-server panel and the dsh-hub CLI.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "model-hub",
+    "cost-tracking",
+    "spend-caps",
+    "budget",
+    "llm-cost",
+    "prompt-cache",
+    "claude",
+    "codex",
+    "ollama",
+    "cli"
+  ],
   "license": "MIT",
   "author": "Antonio Mastropaolo",
   "homepage": "https://github.com/antonio-mastropaolo/dsh-model-hub#readme",
+  "bugs": {
+    "url": "https://github.com/antonio-mastropaolo/dsh-model-hub/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/antonio-mastropaolo/dsh-model-hub.git"
   },
+  "icon": "./icon.svg",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.12",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
   },
-  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "main": "./lib/index.js",
   "bin": {
@@ -21,9 +44,25 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
+  "files": [
+    "bin/dsh-hub.mjs",
+    "lib",
+    "!lib/**/*.test.mjs",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale",
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "inject": [
@@ -35,6 +74,6 @@
     }
   },
   "scripts": {
-    "test": "node --test lib/*.test.mjs lib/accounts/*.test.mjs lib/cost/*.test.mjs lib/host/*.test.mjs bin/*.test.mjs lib/client/*.test.mjs"
+    "test": "node --test lib/*.test.mjs lib/accounts/*.test.mjs lib/cost/*.test.mjs lib/demo/*.test.mjs lib/host/*.test.mjs bin/*.test.mjs lib/client/*.test.mjs"
   }
 }

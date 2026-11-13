@@ -43,6 +43,35 @@ tokens_after() { # $1 = byte offset into $LOG; prints token URLs found after it,
     grep -oE "http://$HOST:$PORT/\?token=[^[:space:]\"')]+" | tail -r
 }
 
+# Optional: a DSH route can read its API key from an environment variable (the route's apiKeyEnv), which a Dock
+# launch does not have. To hand dsh such keys, write ${DSH_LAUNCH_CONF:-~/.config/dsh/launcher.conf} with two lines:
+#   env-file=<a file of NAME=value lines>
+#   names=<NAME> [<NAME> ...]
+# Only the listed names are read from env-file, which is never sourced; no value is ever printed or logged; names that
+# could change how programs run (PATH, NODE_OPTIONS, DYLD_*, ...) are refused. Without the conf file nothing changes.
+load_launch_env() {
+  local conf="${DSH_LAUNCH_CONF:-$HOME/.config/dsh/launcher.conf}" file="" names="" line n v
+  [ -r "$conf" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      env-file=*) file="${line#env-file=}" ;;
+      names=*) names="${line#names=}" ;;
+    esac
+  done < "$conf"
+  file="${file/#\~/$HOME}"
+  [ -n "$file" ] && [ -r "$file" ] && [ -n "$names" ] || return 0
+  for n in $names; do
+    [[ "$n" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    case "$n" in
+      PATH|HOME|SHELL|IFS|ENV|BASH_ENV|NODE_OPTIONS|NODE_PATH|DYLD_*|LD_*) continue ;;
+    esac
+    line="$(grep -m1 "^$n=" "$file" 2>/dev/null)" || continue
+    v="${line#"$n"=}"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    [ -n "$v" ] && export "$n=$v"
+  done
+  return 0
+}
+
 mkdir -p "$(dirname "$LOG")"
 touch "$LOG" && chmod 600 "$LOG"
 
@@ -59,6 +88,7 @@ if web_up; then
 else
   OFFSET="$(stat -f %z "$LOG")"
   cd "$HOME" || exit 1
+  load_launch_env
   # setsid: own session + process group, so dsh keeps running after this launcher exits.
   /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' -- \
     "$NODE_BIN" "$DSH_BIN" web --patch "$PATCH" --no-open --host "$HOST" --port "$PORT" \
