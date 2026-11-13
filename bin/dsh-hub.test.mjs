@@ -8,6 +8,12 @@ import { fileURLToPath } from "node:url";
 import { main } from "./dsh-hub.mjs";
 import { _resetLedgerCache, appendSpend } from "../lib/cost/ledger.mjs";
 import { yamlAvailable } from "../lib/accounts/accounts.mjs";
+import { loadPriceTable } from "../lib/cost/prices.mjs";
+
+// A fresh price cache in the data dir, built by the real loader from a synthetic LiteLLM table: doctor's price check then never
+// depends on the network or on a LiteLLM install that happens to exist on the machine running the tests (CI has none).
+const PRICE_RAW = Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`gemini/test-model-${i}`, { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6, litellm_provider: "gemini", mode: "chat" }]));
+const seedPrices = (dataDir) => loadPriceTable({ dataDir, fetchImpl: async () => ({ ok: true, status: 200, json: async () => PRICE_RAW }), fallbackPath: null });
 
 // integration tests that read a real credential file need DSH's own YAML parser
 const NEEDS_DSH = yamlAvailable() ? false : "DeepSeek Harness not installed (needs its yaml); set DSH_NODE_MODULES to run";
@@ -835,7 +841,9 @@ test("doctor: slash commands ok, none registered is a warning, a collision is a 
   assert.equal(await doctorCheck(undefined), undefined);
   const f = statusWith({ registered: ["caps", "route", "receipt"], collided: ["cost"] });
   const lit = async (u) => { if (String(u).includes("hub.test")) return f(u); throw new Error("offline"); };
-  const r = await run(["doctor", "--json"], { fetch: lit, gpu: gpuOk });
+  const e = env();
+  await seedPrices(e.env.DSH_HUB_DATA_DIR);
+  const r = await run(["doctor", "--json"], { fetch: lit, gpu: gpuOk, e });
   const j = JSON.parse(r.out);
   const sc = j.checks.find((c) => c.name === "slash commands");
   assert.equal(sc.level, "warn", "a collision is a warning");

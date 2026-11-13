@@ -7,6 +7,12 @@ import { main } from "./dsh-hub.mjs";
 import { appendSpend, ledgerRows, _resetLedgerCache } from "../lib/cost/ledger.mjs";
 import { exportRows, exportTargetIsLedger, EXPORT_COLUMNS, VERIFY_NOTE } from "../lib/cost/verify.mjs";
 import { makeSpendRecord } from "../lib/cost/cost.mjs";
+import { loadPriceTable } from "../lib/cost/prices.mjs";
+
+// A fresh price cache in the data dir, built by the real loader from a synthetic LiteLLM table: doctor's price check then never
+// depends on the network or on a LiteLLM install that happens to exist on the machine running the tests (CI has none).
+const PRICE_RAW = Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`gemini/test-model-${i}`, { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6, litellm_provider: "gemini", mode: "chat" }]));
+const seedPrices = (dataDir) => loadPriceTable({ dataDir, fetchImpl: async () => ({ ok: true, status: 200, json: async () => PRICE_RAW }), fallbackPath: null });
 
 const P = { inPerM: 2, outPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5, source: 'litellm', billing: 'metered' };
 function env() {
@@ -302,6 +308,7 @@ test("status --json carries guard; an older host without it prints no guard line
 
 const doctorChecks = async (e, f) => {
   const lit = async (u) => { if (String(u).includes("hub.test")) return f(u); throw new Error("offline"); };
+  await seedPrices(e.env.DSH_HUB_DATA_DIR);
   const r = await runF(["doctor", "--json"], e, lit);
   return { r, checks: JSON.parse(r.out).checks };
 };

@@ -7,6 +7,12 @@ import { join } from "node:path";
 import { main } from "./dsh-hub.mjs";
 import { writeDemo } from "../lib/demo/write.mjs";
 import { DEMO_TEXT } from "../lib/demo/constants.mjs";
+import { loadPriceTable } from "../lib/cost/prices.mjs";
+
+// A fresh price cache in the data dir, built by the real loader from a synthetic LiteLLM table: doctor's price check then never
+// depends on the network or on a LiteLLM install that happens to exist on the machine running the tests (CI has none).
+const PRICE_RAW = Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`gemini/test-model-${i}`, { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6, litellm_provider: "gemini", mode: "chat" }]));
+const seedPrices = (dataDir) => loadPriceTable({ dataDir, fetchImpl: async () => ({ ok: true, status: 200, json: async () => PRICE_RAW }), fallbackPath: null });
 
 const AT = "2026-11-12T15:00:00Z";
 const tmp = () => mkdtempSync(join(tmpdir(), "demo-cli-"));
@@ -172,6 +178,7 @@ test("help lists demo and says demo mode", async () => {
 test("doctor warns when the running host reports demo:true, and stays quiet when it reports demo:false", async () => {
   const dir = join(tmp(), "data");
   mkdirSync(dir);
+  await seedPrices(dir);
   const host = (demo) => async (url) => {
     const p = new URL(url).pathname;
     const body = p === "/healthz" ? { ok: true, demo }
