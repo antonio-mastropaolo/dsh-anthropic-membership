@@ -4,7 +4,7 @@ All notable changes to dsh-model-hub are listed here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - Unreleased
+## [3.0.0] - 2026-11-13
 
 Thanks to Mihail Turusov (sneakyjoeru) for pull requests #1, #3 and #4: the dock chip sizing, the opt-in plan stop and the dock chip tooltip.
 
