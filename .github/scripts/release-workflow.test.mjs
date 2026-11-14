@@ -51,6 +51,12 @@ test('job order and the publish command', () => {
   assert.match(jobs.publish, /npm publish "\$TARBALL" --provenance --access public/);
 });
 
+test('the tarball path starts with ./ so npm reads it as a file, not GitHub shorthand', () => {
+  // `npm publish pack/x.tgz` is parsed as the GitHub repo pack/x.tgz and fails with a git error
+  // (release run 43561502543); `./pack/x.tgz` is a local file.
+  assert.match(jobs.publish, /TARBALL=\$\(ls \.\/pack\/\*\.tgz\)/);
+});
+
 test('every action is pinned to a full commit SHA with a version comment; checkouts keep no credentials', () => {
   const uses = lines.filter((l) => /^\s+- uses:|^\s+uses:/.test(l));
   assert.ok(uses.length >= 5);
