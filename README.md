@@ -239,7 +239,7 @@ Everything lives in the **data dir**: `$DSH_HUB_DATA_DIR`, else `$DSH_HOME/model
 | `priceModels` | up to 50 `provider/model` ids (the model part may contain `/`; at most 120 characters) always shown in the Prices card, besides models you actually used |
 | `plans` | prepaid monthly credits per provider, e.g. `{"ollama": {"name": "Pro", "includedUsd": 60, "resetsOnDay": 9}}`. See [Plans](#plans-and-billing-kinds) |
 | `subscriptions` | provider ids declared as subscription-billed (`$0` charged, API value kept, never capped). The By provider table of the Costs card and the Prices card label them `Subscription · declared` (the tooltip says "Declared in config.json"), and `dsh-hub prices` says "declared in config.json", so a typo is visible. A provider also in `localProviders` stays local |
-| `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only** |
+| `extraLedgers` | other spend ledgers (JSONL rows with `ts`, `usd`, optional `provider`) shown next to DSH's spend, **display only**. A row with `model` and `output_tokens` that matches a call DSH's own ledger already holds (same model id and output tokens, timestamps within 5 s, one DSH row per meter row) is dropped, so each call is counted once; `GET /spend` reports those under `external.deduped` |
 | `guard` | `{"onError": "allow" \| "block"}`, default `allow`: what the spend guard does when it fails itself (throws an internal error). `allow` lets the request through; `block` stops it as a spend-cap stop (code `SPEND_CAP`) whose message points at `guard.onError`. `block` also stops a request whose billing could not be determined because the failure happened before its price was known (that can be a local or subscription request); a request the guard had already classified as not metered is never stopped by it. Re-read on every request. Anything but exactly `"allow"` or `"block"` is ignored (`allow`) and reported by `dsh-hub doctor` |
 
 Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` (price overrides),
@@ -471,7 +471,9 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
   (`{"provider/model": {"inPerM": 1.25, "outPerM": 10, "cacheReadPerM": 0.125, "billing": "metered"}}`, `billing`
-  optional) win, and edits to the file apply without a restart. A model with no known price
+  optional) win, and edits to the file apply without a restart. A row that is only `{"billing": "metered"}` (no rates at all) says
+  "pay per token, price unknown": the model is metered and unpriced, even on a loopback base URL (the picker shows Unpriced, and caps
+  follow the unpriced rules below). A model with no known price
   is `unpriced`, never guessed: its calls are stored at $0 and **do not count toward caps** — the Costs card's warning box says
   "N unpriced calls today — not counted toward caps (add prices.json)", the Prices card marks the model `Add price`, and the host logs the model once, so you can add it to `prices.json`. If a provider has a
   `perProviderDailyUsd` cap, its unpriced models are blocked instead (their spend could not be counted). While no
@@ -903,7 +905,7 @@ plugin: add the server's OpenAI-compatible `/v1/chat/completions` as a normal DS
 | `GET /spend/session?id=<id>` | the receipt of one session: `sessionId`, `calls`, `usd`, `apiEquivUsd`, `notChargedUsd`, `turns`, `firstTs`, `lastTs`, `cache`, `byRoute` (provider, model, billing, calls, money), `byPurpose`, `byBilling`, `notAttributed`, `subagents` (one level; `sessions` at most 50 and `moreSessions`), `withSubagents`, plus `markdown` (the string `dsh-hub receipt --md` prints), `caps` (`dailyUsd`, `sessionUsd`, `todayUsd` as numbers and the `action` word `ok`, `warn` or `block`; `null` when the guard cannot report them), `complete`, `unreadable`. `id` is required and is an opaque id matched exactly (1-128 characters of `A-Za-z0-9_.:-`, else 400); an id with no rows is 200 with zeros; 503 when unavailable; `"demo": true` in demo mode (the Markdown then starts with the DEMO line). Behind the hub header like every GET; shares the held ledger rows of `/spend/turns` |
 | `GET /ledger/verify?since=today\|7d\|30d\|all` | the same report as `dsh-hub ledger verify` (default `all`; `ok`, `rows`, `checked`, `v1`, `mismatchCount`, `mismatches` (at most 100), `tornLines`, `duplicateCount`, `duplicateIds`, `unknownFields`, `complete`, `unreadable`, `note`). Read-only, behind the hub header like every GET; it re-reads the whole ledger, at most once per 5 seconds per `since` (concurrent and repeated calls share that read, unless this host wrote a row in between) |
 | `GET /forecast` | **estimates**, never limits: `spend` has the charged $/h over 15 and 60 minutes, today's projection, when each cap and plan credit would be reached at this pace (with a range), and the `API value, not charged` pace; `plan` has the Claude 5-hour and weekly window fits from the plan-history file; `complete: false` and no spend estimates when the ledger cannot be read in full; `capsProblem` names an invalid `caps.json`; 503 when unavailable. See [Forecast](#forecast) |
-| `GET /prices?models=provider/model,...`, `GET /hub/config` | price rows + provider credit health; `priceModels` |
+| `GET /prices?models=provider/model,...`, `GET /hub/config` | price rows + provider credit health, and `hostPlatform` (the host's `process.platform`); `priceModels`. At most 50 ids per request (the picker sends longer lists in batches). Each id is priced with that provider's real route: the base URL DSH loaded for the provider |
 | `GET /cache[?session=<id>]` | prompt-cache hit ratios (`"demo": true` added in demo mode) |
 | `GET /gpu/config`, `/gpu/gpus`, `/gpu/models`, `POST /gpu/switch`, `POST /gpu/unload` | the GPU server (proxied); `/rocco/*` are kept as aliases |
 
@@ -914,6 +916,27 @@ the section shows a notice at its top (and the dock a pill, `other DSH's hub`) t
 first asks the hub which instance it belongs to and is sent only when that is positively this page's instance, so
 from another instance, or before the hub reports its owner, nothing is changed. Cost capture and caps still run in
 every instance.
+
+## Billing chips in the model picker
+
+Every row of DSH's model picker (and the closed picker button, and the current model at the top of the open menu) shows a model-family
+logo, the model name and a billing chip, through the `conversation.input.model.label` slot. A menu row also has a second line with
+the rates. All chips are the same size (100 x 20 px). The same chips, with one line each, are explained in a card on the Model hub
+settings page.
+
+| Chip | Means | Second line (menu rows) |
+|---|---|---|
+| Plan | covered by a Pro/Max, ChatGPT or Copilot plan, or by plan credits; $0 per call | `On your plan · API value $5 in / $25 out per 1M · 5h 12% · week 40%` (Claude windows from `/status`; a Fable model shows `Fable week N%`; parts with no reading are left out) |
+| Metered | pay per token, counted in the ledger and stopped by your caps | `$1.40 in / $4.40 out per 1M · counts toward your caps` (`Ollama cloud · ` in front for `:cloud` ids) |
+| Unpriced | pay per token but no price is known | `Billed per token, no price set · caps can't count it` |
+| Free | a $0 cloud route | `Free · $0` |
+| GPU server | the provider is `gpuServer.id` and the route is local | `Your GPU server · $0 · never capped` |
+| This Mac | any other local route (`This computer` when the host is not macOS) | `Runs on this Mac · $0 · never capped` |
+
+Prices are asked from the host in batches of 50, cached in the page and refreshed every 60 s while a picker is on screen. Money is
+written as whole dollars (`$5`) or with at least two decimals (`$0.10`). Logos are picked from the model id and name (Claude, Qwen,
+GLM, Kimi, OpenAI/GPT, Gemini, Gemma, Grok, Llama, Mistral); a model of another family keeps an empty 18 px slot so names stay aligned.
+Model and provider names come from config and are only ever rendered as text.
 
 ## Plans and billing kinds
 
@@ -931,6 +954,11 @@ logged. `priceSource` is `ollama` (refreshed copy) or `ollama-snapshot` (bundled
 A route is Ollama Cloud when the provider is `ollama` / `ollama-cloud` and the base URL's host is exactly `ollama.com`
 (or the model id ends in `:cloud` / `-cloud`, or the base URL is unknown). Ollama on a loopback/private base URL with a
 non-cloud model is **local** ($0). The built-in-pricing guard for `localProviders` typos stays for every other provider.
+
+An Ollama Cloud model id (`:cloud` / `-cloud`) on a provider that is **not** in the built-in-pricing list (the rocco gateway, for
+example, forwards those ids to Ollama Cloud, which bills per token) is priced from the same Ollama table as **metered**, even when
+that provider's base URL is loopback, and even when the provider is listed in `localProviders`. A cloud id Ollama has no rate for is
+`unpriced` (billed, but nothing to count with). A `prices.json` row still wins, so a route that really is free can say so.
 
 **Plans.** With `plans.<provider>` set, a priced call is billed **credits** while that provider's API value this cycle
 (since the most recent `resetsOnDay` at 00:00 UTC, clamped to the month's last day) stays within `includedUsd`: charged
@@ -1071,9 +1099,14 @@ author's setup; see [`macos/README.md`](macos/README.md) before using it.
 tests use DSH's own `sharp` and `yaml`; they are skipped, not failed, when DSH is not installed (set
 `DSH_NODE_MODULES` to run them). Changes by version: [`CHANGELOG.md`](CHANGELOG.md).
 
+The picker's logos and glyphs are data, generated by `scripts/build-icons.mjs` from `@lobehub/icons-static-svg@1.102.0` and
+`@phosphor-icons/core@2.1.1` (download both into fresh directories and pass them to the script; it refuses any SVG that contains
+`<script`, an `on…=` attribute or `javascript:`). It writes `lib/icons-data.mjs` and the matching block of `lib/client.js`, which a
+test keeps identical. There is no icon download at runtime.
+
 ## License and attribution
 
 MIT © 2026 Antonio Mastropaolo — see [`LICENSE`](LICENSE). Source: https://github.com/antonio-mastropaolo/dsh-model-hub.
 If you reuse or index this code, keep the copyright notice and attribute it to Antonio Mastropaolo and
-`antonio-mastropaolo/dsh-model-hub`. Embedded provider icons come from LobeHub Icons (MIT); see
+`antonio-mastropaolo/dsh-model-hub`. Embedded provider icons come from LobeHub Icons (MIT), the billing glyphs from Phosphor Icons (MIT); see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
