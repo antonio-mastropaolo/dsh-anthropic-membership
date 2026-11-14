@@ -471,7 +471,9 @@ Other files in the data dir: `spend.jsonl` (ledger), `caps.json`, `prices.json` 
   `prices.json` says so (`"billing": "free"`), and **local** if its provider is in `localProviders`.
 - **Prices**: LiteLLM's public table (fetched over HTTPS, size-capped, cached 24 h). Overrides in `prices.json`
   (`{"provider/model": {"inPerM": 1.25, "outPerM": 10, "cacheReadPerM": 0.125, "billing": "metered"}}`, `billing`
-  optional) win, and edits to the file apply without a restart. A model with no known price
+  optional) win, and edits to the file apply without a restart. A row that is only `{"billing": "metered"}` (no rates at all) says
+  "pay per token, price unknown": the model is metered and unpriced, even on a loopback base URL (the picker shows Unpriced, and caps
+  follow the unpriced rules below). A model with no known price
   is `unpriced`, never guessed: its calls are stored at $0 and **do not count toward caps** — the Costs card's warning box says
   "N unpriced calls today — not counted toward caps (add prices.json)", the Prices card marks the model `Add price`, and the host logs the model once, so you can add it to `prices.json`. If a provider has a
   `perProviderDailyUsd` cap, its unpriced models are blocked instead (their spend could not be counted). While no
